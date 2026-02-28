@@ -1,0 +1,17 @@
+[project]
+name = "multiagent"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = "==3.11.*"
+dependencies = [
+    "fastapi>=0.134.0",
+    "langchain>=1.2.10",
+    "langchain-community>=0.4.1",
+    "langchain-core>=1.2.16",
+    "langchain-groq>=1.1.2",
+    "langgraph>=1.0.10",
+    "langgraph-cli[inmem]>=0.4.12",
+    "uvicorn>=0.41.0",
+    "watchdog>=6.0.0",
+]

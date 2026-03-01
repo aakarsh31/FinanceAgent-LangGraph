@@ -29,4 +29,4 @@ class BlogNode:
                 """
             system_message = prompt.format(topic=state["topic"])
             response = self.llm.invoke(system_message)
-            return {"blog":{"title":state['blog','title'],"content":response.content}}
+            return {"blog":{"title":state['blog']['title'],"content":response.content}}

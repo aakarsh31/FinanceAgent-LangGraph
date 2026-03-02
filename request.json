@@ -1,3 +1,9 @@
-{
-    "topic":"Agentic AI"
-}
+[
+    {
+        "topic":"Agentic AI"
+    },
+    {
+        "topic":"Agentic AI",
+        "language":"french"
+    }
+]

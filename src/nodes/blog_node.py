@@ -15,7 +15,7 @@ class BlogNode:
 
         if "topic" in state and state["topic"]:
             prompt="""
-                You are an expert blog content writer. Use Markdown formatting. Generate a blog title for the {topic}. This title should be creative and SEO friendly.
+                You are an expert blog content writer. Use Markdown formatting. Generate a blog title for the {topic}. Only give a single Title name in a concise and creative way.
                 """
             
             system_message=prompt.format(topic=state["topic"])

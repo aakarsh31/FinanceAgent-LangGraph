@@ -13,24 +13,26 @@ app = FastAPI()
 
 os.environ['LANGSMITH_API_KEY'] = os.getenv("LANGCHAIN_API_KEY")
 
-@app.post("/blogs")
-async def create_blogs(request:Request):
+@app.post("/analyze")
+async def analyze_stock(request:Request):
     data=await request.json()
-    topic= data.get("topic","")
-    language = data.get("language","")
-    
+    ticker = data.get("ticker","")
+    timeframe = data.get("timeframe","")
+    asset_class = data.get("asset_class","equity")
+
     groqllm = GroqLLM()
     llm = groqllm.get_llm() #load llama model
 
     graph_builder = GraphBuilder(llm)
-    if language and topic:
-        graph = graph_builder.setup_graph(usecase="language")
-        state = graph.invoke({"topic":topic,"current_language":language.lower()})
-    elif topic:
-        graph = graph_builder.setup_graph(usecase="topic")
-        state = graph.invoke({"topic":topic})
     
-    return {"data":state}
+    graph = graph_builder.setup_graph()
+    state = graph.invoke({"ticker":ticker,"timeframe":timeframe,"asset_class":asset_class})
+        
+    
+    return {
+    "ticker": ticker,
+    "report": state["report"]
+}
 
 if __name__ == "__main__":
     uvicorn.run("app:app",host="0.0.0.0",port=8000,reload=True)

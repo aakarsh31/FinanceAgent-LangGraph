@@ -39,6 +39,69 @@ POST /analyze
 
 ---
 
+## Sample Outputs
+
+The pipeline correctly distinguishes between defensive and high-risk stocks using the same agents and live market data.
+
+### Conservative Stock — Johnson & Johnson (JNJ)
+```json
+{
+    "ticker": "JNJ",
+    "report": {
+        "summary": "Johnson & Johnson's stock has a neutral sentiment due to mixed news headlines, but its fundamentals and risk profile are relatively stable. The P/E ratio is 21.65, EPS is 11.02, and revenue growth is low at 0.091%. The debt to equity ratio is 60.499, which is a concern. However, the volatility is 19.13% and beta is 0.326, indicating a relatively stable stock. The risk flags indicate low volatility and stable earnings. Overall, the stock's stability and dividend history make it a decent investment opportunity.",
+        "recommendations": "Hold",
+        "key_metrics": [
+            "P/E: 21.646551",
+            "EPS: 11.02",
+            "Revenue Growth: 0.091%",
+            "Debt to Equity: 60.499",
+            "Volatility: 19.13%",
+            "Beta: 0.326",
+            "Sentiment: 0.0 (Neutral)"
+        ],
+        "confidence": "Medium"
+    }
+}
+```
+
+### High-Risk Stock — Tesla (TSLA)
+```json
+{
+    "ticker": "TSLA",
+    "report": {
+        "summary": "Tesla's stock (TSLA) has a high P/E ratio of 366.40 and a relatively low EPS of 1.09, indicating potential overvaluation. The revenue growth is negative at -0.031%, which is a concern. However, the debt to equity ratio is manageable at 17.763. The sentiment analysis reveals a bullish tone with a score of 0.6, driven by positive news headlines and innovative products. Despite this, the risk analysis shows high volatility at 36.03% and a high beta of 1.926, indicating a risky investment. Overall, the report suggests a cautious approach due to the mixed signals from the data.",
+        "recommendations": "Hold",
+        "key_metrics": [
+            "P/E: 366.40366",
+            "EPS: 1.09",
+            "Revenue Growth: -0.031%",
+            "Debt to Equity: 17.763",
+            "Beta: 1.926",
+            "Volatility: 36.03%",
+            "Sentiment: 0.6 (Bullish)"
+        ],
+        "confidence": "Medium"
+    }
+}
+```
+
+### Side-by-Side Comparison
+
+| Metric | JNJ (Defensive) | TSLA (High-Risk) |
+|--------|----------------|-----------------|
+| P/E Ratio | 21.65 | 366.40 |
+| EPS | 11.02 | 1.09 |
+| Beta | 0.326 | 1.926 |
+| Volatility | 19.13% | 36.03% |
+| Revenue Growth | +0.091% | -0.031% |
+| Sentiment | Neutral (0.0) | Bullish (0.6) |
+| Recommendation | Hold | Hold |
+| Confidence | Medium | Medium |
+
+Same pipeline, same agents, same code — completely different risk profiles correctly identified from live market data.
+
+---
+
 ## Architecture
 
 ```

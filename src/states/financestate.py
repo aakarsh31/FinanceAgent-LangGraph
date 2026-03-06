@@ -45,10 +45,12 @@ class FinancialReport(BaseModel):
 
 # The state — the baton that travels through all agents
 class FinanceState(TypedDict):
+    #Provided by user
     ticker: str
     asset_class: str
-    raw_data: dict
     timeframe: str  # yfinance format: "1mo", "3mo", "6mo", "1y", "2y"
+    #Produced by pipeline
+    raw_data: dict
     news_headlines: list[str]
     fundamentals: Optional[FundamentalsData]
     sentiment: Optional[SentimentData]

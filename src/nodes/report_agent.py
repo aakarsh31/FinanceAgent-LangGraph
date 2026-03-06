@@ -28,9 +28,11 @@ class ReportAgent():
         - Beta: {state['risk'].beta}
         - Risk Flags: {state['risk'].risk_flag}
 
-        Produce a comprehensive investment report with a summary, 
-        recommendation (Buy/Hold/Sell), key metrics to watch, 
-        and your confidence level.
+        Produce a comprehensive investment report with:
+        - summary: narrative analysis combining all the above data
+        - recommendations: Buy, Hold, or Sell
+        - key_metrics: list the ACTUAL VALUES e.g. ['P/E: 31.2', 'EPS: 6.43', 'Beta: 1.12', 'Volatility: 23.4%','Sentiment: 0.6 (Bullish)']
+        - confidence: High, Medium, or Low based on data quality
 
 
         """

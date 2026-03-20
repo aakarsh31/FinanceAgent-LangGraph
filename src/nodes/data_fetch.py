@@ -1,7 +1,7 @@
 from src.states.financestate import FinanceState
 import yfinance as yf
 
-from src.exceptions import FinanceAgentError,EmptyDataError,TickerNotFoundError,DataFetchRateLimitError,LLMStructuredOutputError
+from src.exceptions import FinanceAgentError,EmptyDataError,TickerNotFoundError,DataFetchRateLimitError
 import logging
 
 logger = logging.getLogger(__name__)

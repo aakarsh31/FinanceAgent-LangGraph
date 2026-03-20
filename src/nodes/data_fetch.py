@@ -27,6 +27,7 @@ class DataFetchAgent:
         try:
             stock = yf.Ticker(ticker)
             info = stock.info
+
             history = stock.history(period=timeframe).to_dict()
             news = stock.news
         except Exception as e:
@@ -41,11 +42,13 @@ class DataFetchAgent:
             logger.warning(f"No price history returned for {ticker}")
             raise EmptyDataError(f"No price history for '{ticker}' over timeframe '{timeframe}'")
         
-        logger.info(f"Successfully fetched data for {ticker} — {len(headlines)} headlines retrieved")
+        
         
         #Extract headlines as a list of strings
         # with each new item as a dict with key as "Title"
         headlines = [article['content']['title'] for article in news if article.get("content") and article["content"].get("title")]
+
+        logger.info(f"Successfully fetched data for {ticker} — {len(headlines)} headlines retrieved")
 
         #return state fields
         return{

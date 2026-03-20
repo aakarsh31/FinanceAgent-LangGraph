@@ -17,10 +17,11 @@ class FundamentalsAgent:
         }
 
         prompt = f"""
-        You are a financial Analyst, Analyze these fundamentals for {state["ticker"]}: {relevant_data}
-        
+        You are a financial analyst. Analyze these fundamentals for {state["ticker"]}: {relevant_data}
+
         Return a structured analysis with PE_ratio, EPS, revenue_growth and debt_to_equity.
-        If a value is missing, make a reasonable estimate based on the sector.
+        If a value is None or missing, return null for that field. 
+        Do NOT estimate or invent values — null is more honest than a guess.
         """
 
         messages = [HumanMessage(content=prompt)]

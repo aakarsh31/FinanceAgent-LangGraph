@@ -28,6 +28,17 @@ class DataFetchAgent:
             stock = yf.Ticker(ticker)
             info = stock.info
 
+            analyst_consensus = {
+            "recommendation": info.get("recommendationKey"),
+            "target_price": info.get("targetMeanPrice"),
+            "num_analysts": info.get("numberOfAnalystOpinions")
+            }
+
+            logger.info(f"Analyst consensus for {ticker}: {analyst_consensus}")
+
+            if not analyst_consensus.get("recommendation"):
+                logger.warning(f"No analyst consensus available for {ticker}")
+
             history = stock.history(period=timeframe).to_dict()
             news = stock.news
         except Exception as e:
@@ -56,5 +67,6 @@ class DataFetchAgent:
                 "info":info,
                 "history":history,
             },
-            "news_headlines":headlines
+            "news_headlines":headlines,
+            'analyst_consensus':analyst_consensus
         }

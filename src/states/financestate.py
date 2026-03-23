@@ -38,6 +38,8 @@ class FinancialReport(BaseModel):
 
     confidence: str = Field(description="Confidence level of the recommendation: High / Medium / Low")
 
+    analyst_agreement: str = Field(description="Whether pipeline recommendation agreed with Wall Street analyst consensus e.g. 'Agreed — both recommend Hold' or 'Disagreed — pipeline says Buy, analysts say Sell'")
+
 
 
 # The state — the baton that travels through all agents
@@ -52,4 +54,5 @@ class FinanceState(TypedDict):
     fundamentals: Optional[FundamentalsData]
     sentiment: Optional[SentimentData]
     risk: Optional[RiskData]
+    analyst_consensus: Optional[dict]
     report: Optional[FinancialReport]

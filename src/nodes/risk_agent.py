@@ -18,10 +18,11 @@ class RiskDataAgent():
 
         info = state['raw_data']['info']
         beta = info.get("beta")
+        beta_display = f"{beta}" if beta is not None else "unavailable"
 
         prompt = f"""
         You are a financial Analyst, Analyze the risk_flags for {state['ticker']} using the following metrics:
-        Beta : {beta} and \n Annualized Volatility: {volatility:.2f}%.
+        Beta : {beta_display} and \n Annualized Volatility: {volatility:.2f}%.
 
         Return the metrics along with the Risk Flags u found associated with them
         """

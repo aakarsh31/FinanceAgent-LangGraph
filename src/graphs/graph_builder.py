@@ -73,7 +73,7 @@ class GraphBuilder:
         return self.graph
     
     def setup_graph(self,mode="sequential"):
-        if mode == "paralell":
+        if mode == "parallel":
             self.build_parallel_graph()
         else:
             self.build_sequential_graph()

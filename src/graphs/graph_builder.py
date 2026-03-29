@@ -81,8 +81,3 @@ class GraphBuilder:
         return self.graph.compile()
        
     
-# For LangGraph Studio
-if os.getenv("ENVIRONMENT") != "production":
-    llm = GroqLLM().get_llm()
-    graph_builder = GraphBuilder(llm)
-    graph = graph_builder.setup_graph()

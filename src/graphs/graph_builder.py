@@ -6,6 +6,7 @@ from src.nodes.fundamentals_agent import FundamentalsAgent
 from src.nodes.sentiment_agent import SentimentAgent
 from src.nodes.risk_agent import RiskDataAgent
 from src.nodes.report_agent import ReportAgent
+import os
 
 class GraphBuilder:
     def __init__(self,llm):
@@ -81,6 +82,7 @@ class GraphBuilder:
        
     
 # For LangGraph Studio
-llm = GroqLLM().get_llm()
-graph_builder = GraphBuilder(llm)
-graph = graph_builder.setup_graph()
+if os.getenv("ENVIRONMENT") != "production":
+    llm = GroqLLM().get_llm()
+    graph_builder = GraphBuilder(llm)
+    graph = graph_builder.setup_graph()

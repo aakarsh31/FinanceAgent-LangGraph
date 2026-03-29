@@ -28,8 +28,17 @@ class DataFetchAgent:
             stock = yf.Ticker(ticker)
             info = stock.info
 
+            # Normalize yfinance recommendation to match our pipeline output
+            rec = info.get("recommendationKey", "").lower()
+            normalized = (
+                "Buy" if rec in ["buy", "strongbuy", "strong_buy"] else
+                "Sell" if rec in ["sell", "strongsell", "strong_sell"] else
+                "Hold" if rec in ["hold", "underperform", "neutral"] else
+                "unavailable"
+            )
+
             analyst_consensus = {
-            "recommendation": info.get("recommendationKey"),
+            "recommendation": normalized,
             "target_price": info.get("targetMeanPrice"),
             "num_analysts": info.get("numberOfAnalystOpinions")
             }

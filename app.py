@@ -2,7 +2,10 @@ import uvicorn
 from fastapi import FastAPI, Request, HTTPException
 from src.graphs.graph_builder import GraphBuilder
 from src.llms.groqllm import GroqLLM
-from src.exceptions import FinanceAgentError,EmptyDataError,TickerNotFoundError,DataFetchRateLimitError
+from src.exceptions import FinanceAgentError
+
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 import os
 from dotenv import load_dotenv
@@ -13,6 +16,19 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 app = FastAPI()
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s:%(funcName)s:%(lineno)d %(message)s",
+    force=True
+)
+
+app.mount("/static", StaticFiles(directory="frontend"), name="static")
+
+@app.get("/")
+async def serve_frontend():
+    return FileResponse("frontend/index.html")
+
 VALID_TIMEFRAMES = ["1mo", "3mo", "6mo", "1y", "2y"]
 VALID_ASSET_CLASSES = ["equity", "crypto", "macro"]
 

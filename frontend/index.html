@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FINANCEAGENT</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --black:   #000000;
+      --amber:   #FFA028;
+      --amber-d: #cc7d1a;
+      --white:   #f0e8d8;
+      --dim:     #6b5c42;
+      --green:   #4cff91;
+      --red:     #ff4444;
+      --yellow:  #ffe44d;
+      --surface: #0a0a0a;
+      --line:    #1a1a1a;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html { font-size: 13px; }
+
+    body {
+      background: var(--black);
+      color: var(--white);
+      font-family: 'IBM Plex Mono', monospace;
+      min-height: 100vh;
+      cursor: crosshair;
+    }
+
+    /* ── top bar ── */
+    .topbar {
+      background: var(--amber);
+      color: var(--black);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+      height: 28px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .topbar-left { display: flex; align-items: center; gap: 24px; }
+    .topbar-right { display: flex; align-items: center; gap: 16px; }
+    .logo { font-size: 12px; font-weight: 600; letter-spacing: 0.15em; }
+    .topbar-tag { font-size: 10px; opacity: 0.7; letter-spacing: 0.06em; }
+    #clock { font-variant-numeric: tabular-nums; font-size: 11px; }
+
+    /* ── layout ── */
+    .shell {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      min-height: calc(100vh - 28px);
+    }
+
+    /* ── sidebar ── */
+    .sidebar {
+      border-right: 1px solid var(--line);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .sidebar-section { border-bottom: 1px solid var(--line); padding: 16px; }
+
+    .section-header {
+      font-size: 9px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--amber);
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .section-header::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--line);
+    }
+
+    .field { margin-bottom: 12px; }
+
+    .field label {
+      display: block;
+      font-size: 9px;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--dim);
+      margin-bottom: 5px;
+    }
+
+    .field input,
+    .field select {
+      width: 100%;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-left: 2px solid var(--amber);
+      color: var(--white);
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 13px;
+      padding: 7px 10px;
+      outline: none;
+      transition: border-color 0.15s;
+      -webkit-appearance: none;
+      border-radius: 0;
+    }
+
+    .field input:focus,
+    .field select:focus { border-color: var(--amber); background: #0f0a00; }
+
+    .field input::placeholder { color: var(--dim); }
+    .field select option { background: #111; }
+
+    .run-btn {
+      width: 100%;
+      background: var(--amber);
+      color: var(--black);
+      border: none;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      padding: 10px;
+      cursor: crosshair;
+      transition: background 0.15s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .run-btn:hover { background: var(--amber-d); }
+    .run-btn:disabled { background: #3a2e1a; color: var(--dim); cursor: not-allowed; }
+
+    .spinner {
+      width: 10px; height: 10px;
+      border: 1.5px solid rgba(0,0,0,0.3);
+      border-top-color: var(--black);
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+      display: none;
+    }
+
+    .run-btn.loading .spinner { display: block; }
+
+    .info-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      padding: 5px 0;
+      border-bottom: 1px solid var(--line);
+      font-size: 11px;
+    }
+
+    .info-row:last-child { border-bottom: none; }
+    .info-row .k { color: var(--dim); font-size: 10px; }
+    .info-row .v { color: var(--white); font-variant-numeric: tabular-nums; }
+    .info-row .v.green { color: var(--green); }
+    .info-row .v.amber { color: var(--amber); }
+
+    .sidebar-grow { flex: 1; }
+
+    .sidebar-footer {
+      padding: 12px 16px;
+      border-top: 1px solid var(--line);
+      font-size: 10px;
+      color: var(--dim);
+      line-height: 1.6;
+    }
+
+    .sidebar-footer a { color: var(--amber); text-decoration: none; }
+    .sidebar-footer a:hover { text-decoration: underline; }
+
+    /* ── main ── */
+    .main { display: flex; flex-direction: column; }
+
+    .cmd-bar {
+      background: var(--surface);
+      border-bottom: 1px solid var(--line);
+      padding: 8px 20px;
+      font-size: 11px;
+      color: var(--dim);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 36px;
+    }
+
+    .cmd-bar .prompt { color: var(--amber); }
+    .cmd-bar .cmd-text { color: var(--white); }
+
+    .content { flex: 1; padding: 20px; overflow-y: auto; }
+
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      min-height: 400px;
+      text-align: center;
+      color: var(--dim);
+    }
+
+    .empty-ascii {
+      font-size: 11px;
+      line-height: 1.4;
+      color: #2a2010;
+      margin-bottom: 24px;
+      white-space: pre;
+      letter-spacing: 0.05em;
+    }
+
+    .empty-state p { font-size: 11px; letter-spacing: 0.08em; }
+
+    .error-bar {
+      display: none;
+      background: rgba(255,68,68,0.08);
+      border: 1px solid rgba(255,68,68,0.3);
+      border-left: 3px solid var(--red);
+      color: var(--red);
+      padding: 10px 16px;
+      font-size: 11px;
+      margin-bottom: 16px;
+      letter-spacing: 0.04em;
+    }
+
+    /* ── result ── */
+    .result { display: none; }
+
+    .result-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 14px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .ticker-sym {
+      font-size: 36px;
+      font-weight: 600;
+      color: var(--amber);
+      line-height: 1;
+      letter-spacing: -0.01em;
+    }
+
+    .ticker-meta {
+      font-size: 10px;
+      color: var(--dim);
+      margin-top: 4px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    .rec-block { text-align: right; }
+
+    .rec-label {
+      font-size: 9px;
+      color: var(--dim);
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+
+    .rec-val {
+      font-size: 22px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .rec-val.buy  { color: var(--green); }
+    .rec-val.hold { color: var(--yellow); }
+    .rec-val.sell { color: var(--red); }
+
+    .confidence-tag { font-size: 10px; margin-top: 4px; color: var(--dim); }
+
+    .result-body {
+      display: grid;
+      grid-template-columns: 1fr 300px;
+      gap: 20px;
+      align-items: start;
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      background: var(--surface);
+      margin-bottom: 16px;
+    }
+
+    .panel-head {
+      background: var(--line);
+      padding: 6px 12px;
+      font-size: 9px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--amber);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .panel-head .ph-right { color: var(--dim); font-size: 9px; }
+    .panel-body { padding: 14px 16px; }
+
+    .summary-text {
+      font-size: 12px;
+      line-height: 1.8;
+      color: #c8bfaf;
+      font-family: 'IBM Plex Sans', sans-serif;
+    }
+
+    .metrics-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .metrics-table tr { border-bottom: 1px solid var(--line); }
+    .metrics-table tr:last-child { border-bottom: none; }
+
+    .metrics-table td { padding: 7px 0; vertical-align: top; }
+
+    .metrics-table td:first-child {
+      color: var(--dim);
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      width: 45%;
+      padding-right: 12px;
+    }
+
+    .metrics-table td:last-child {
+      color: var(--amber);
+      font-variant-numeric: tabular-nums;
+      font-weight: 500;
+    }
+
+    .analyst-text { font-size: 11px; line-height: 1.7; color: #c8bfaf; }
+    .agreed    { color: var(--green); }
+    .disagreed { color: var(--red); }
+
+    .status-row { display: flex; gap: 8px; margin-top: 20px; flex-wrap: wrap; }
+
+    .status-chip {
+      font-size: 9px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      padding: 4px 10px;
+      border: 1px solid var(--amber);
+      color: var(--amber);
+      background: rgba(255,160,40,0.05);
+    }
+
+    /* scanlines */
+    .content::before {
+      content: '';
+      position: fixed;
+      inset: 28px 0 0 280px;
+      background: repeating-linear-gradient(
+        0deg, transparent, transparent 2px,
+        rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px
+      );
+      pointer-events: none;
+      z-index: 50;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .result.visible { animation: fadeIn 0.3s ease both; }
+
+    @media (max-width: 700px) {
+      .shell { grid-template-columns: 1fr; }
+      .sidebar { border-right: none; border-bottom: 1px solid var(--line); }
+      .result-body { grid-template-columns: 1fr; }
+      .content::before { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-left">
+    <span class="logo">FINANCEAGENT</span>
+    <span class="topbar-tag">MULTI-AGENT INVESTMENT ANALYSIS</span>
+    <span class="topbar-tag">LANGGRAPH · LLAMA 3.3 70B · GROQ</span>
+  </div>
+  <div class="topbar-right">
+    <span class="topbar-tag">NEW YORK</span>
+    <span id="clock">--:--:-- ET</span>
+  </div>
+</div>
+
+<div class="shell">
+
+  <aside class="sidebar">
+    <div class="sidebar-section">
+      <div class="section-header">Input Parameters</div>
+      <div class="field">
+        <label>Ticker Symbol</label>
+        <input id="ticker" type="text" placeholder="e.g. AAPL" maxlength="10" autocomplete="off" />
+      </div>
+      <div class="field">
+        <label>Timeframe</label>
+        <select id="timeframe">
+          <option value="1mo">1MO — 1 Month</option>
+          <option value="3mo" selected>3MO — 3 Months</option>
+          <option value="6mo">6MO — 6 Months</option>
+          <option value="1y">1Y  — 1 Year</option>
+          <option value="2y">2Y  — 2 Years</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Asset Class</label>
+        <select id="asset_class">
+          <option value="equity" selected>EQ — Equity</option>
+          <option value="crypto">CR — Crypto</option>
+          <option value="macro">MA — Macro</option>
+        </select>
+      </div>
+      <button class="run-btn" id="runBtn" onclick="analyze()">
+        <div class="spinner"></div>
+        <span class="btn-label">RUN ANALYSIS &lt;GO&gt;</span>
+      </button>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="section-header">Pipeline Status</div>
+      <div class="info-row"><span class="k">Data Fetch</span><span class="v amber" id="s1">READY</span></div>
+      <div class="info-row"><span class="k">Fundamentals</span><span class="v amber" id="s2">READY</span></div>
+      <div class="info-row"><span class="k">Sentiment</span><span class="v amber" id="s3">READY</span></div>
+      <div class="info-row"><span class="k">Risk</span><span class="v amber" id="s4">READY</span></div>
+      <div class="info-row"><span class="k">Report</span><span class="v amber" id="s5">READY</span></div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="section-header">System Info</div>
+      <div class="info-row"><span class="k">Model</span><span class="v">LLaMA 3.3 70B</span></div>
+      <div class="info-row"><span class="k">Inference</span><span class="v">Groq</span></div>
+      <div class="info-row"><span class="k">Orchestration</span><span class="v">LangGraph</span></div>
+      <div class="info-row"><span class="k">Market Data</span><span class="v">yfinance</span></div>
+
+    </div>
+
+    <div class="sidebar-grow"></div>
+
+    <div class="sidebar-footer">
+      Built by <a href="https://github.com/aakarsh31" target="_blank">Aakarsh Reddy</a><br/>
+      M.S. Data Science · Stevens Institute of Technology<br/>
+      <a href="https://github.com/aakarsh31/FinanceAgent-LangGraph" target="_blank">github.com/aakarsh31 →</a>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="cmd-bar">
+      <span class="prompt">&gt;</span>
+      <span class="cmd-text" id="cmdText">AWAITING INPUT — ENTER TICKER AND PRESS RUN</span>
+    </div>
+
+    <div class="content">
+      <div class="error-bar" id="errorBar"></div>
+
+      <div class="empty-state" id="emptyState">
+        <div class="empty-ascii">
+███████╗██╗███╗  ██╗ █████╗ ███╗  ██╗ ██████╗███████╗
+██╔════╝██║████╗ ██║██╔══██╗████╗ ██║██╔════╝██╔════╝
+█████╗  ██║██╔██╗██║███████║██╔██╗██║██║     █████╗
+██╔══╝  ██║██║╚████║██╔══██║██║╚████║██║     ██╔══╝
+██║     ██║██║ ╚███║██║  ██║██║ ╚███║╚██████╗███████╗
+╚═╝     ╚═╝╚═╝  ╚══╝╚═╝  ╚═╝╚═╝  ╚══╝ ╚═════╝╚══════╝</div>
+        <p>ENTER A TICKER SYMBOL TO BEGIN ANALYSIS</p>
+      </div>
+
+      <div class="result" id="result">
+        <div class="result-header">
+          <div>
+            <div class="ticker-sym" id="resTicker"></div>
+            <div class="ticker-meta" id="resMeta"></div>
+          </div>
+          <div class="rec-block">
+            <div class="rec-label">Recommendation</div>
+            <div class="rec-val" id="resRec"></div>
+            <div class="confidence-tag" id="resConf"></div>
+          </div>
+        </div>
+
+        <div class="result-body">
+          <div>
+            <div class="panel">
+              <div class="panel-head">
+                <span>Analysis Summary</span>
+                <span class="ph-right">AI GENERATED · NOT FINANCIAL ADVICE</span>
+              </div>
+              <div class="panel-body">
+                <div class="summary-text" id="resSummary"></div>
+              </div>
+            </div>
+            <div class="panel">
+              <div class="panel-head"><span>Analyst Consensus</span></div>
+              <div class="panel-body">
+                <div class="analyst-text" id="resAnalyst"></div>
+              </div>
+            </div>
+          </div>
+          <div>
+            <div class="panel">
+              <div class="panel-head"><span>Key Metrics</span></div>
+              <div class="panel-body">
+                <table class="metrics-table" id="resMetrics"></table>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="status-row" id="statusRow"></div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+  // Clock
+  function updateClock() {
+    const t = new Date().toLocaleTimeString('en-US', {
+      timeZone: 'America/New_York', hour12: false,
+      hour: '2-digit', minute: '2-digit', second: '2-digit'
+    });
+    document.getElementById('clock').textContent = t + ' ET';
+  }
+  updateClock();
+  setInterval(updateClock, 1000);
+
+  document.getElementById('ticker').addEventListener('keydown', e => {
+    if (e.key === 'Enter') analyze();
+  });
+
+  const stages = ['s1','s2','s3','s4','s5'];
+  const stageLabels = ['FETCHING...','ANALYZING...','SCORING...','COMPUTING...','REPORTING...'];
+  let stageTimer = null;
+
+  function animateStages() {
+    let i = 0;
+    resetStages('...');
+    stageTimer = setInterval(() => {
+      if (i > 0) document.getElementById(stages[i-1]).textContent = 'DONE ✓';
+      if (i < stages.length) document.getElementById(stages[i]).textContent = stageLabels[i];
+      i++;
+      if (i > stages.length) clearInterval(stageTimer);
+    }, 520);
+  }
+
+  function resetStages(label) {
+    stages.forEach(s => document.getElementById(s).textContent = label);
+  }
+
+  function finishStages() {
+    clearInterval(stageTimer);
+    stages.forEach(s => document.getElementById(s).textContent = 'DONE ✓');
+  }
+
+  async function analyze() {
+    const ticker      = document.getElementById('ticker').value.trim().toUpperCase();
+    const timeframe   = document.getElementById('timeframe').value;
+    const asset_class = document.getElementById('asset_class').value;
+    const btn         = document.getElementById('runBtn');
+    const errorBar    = document.getElementById('errorBar');
+    const result      = document.getElementById('result');
+    const empty       = document.getElementById('emptyState');
+
+    errorBar.style.display = 'none';
+    result.style.display   = 'none';
+    result.classList.remove('visible');
+
+    if (!ticker) { showError('TICKER CANNOT BE EMPTY'); return; }
+
+    btn.classList.add('loading');
+    btn.disabled = true;
+    btn.querySelector('.btn-label').textContent = 'RUNNING...';
+    empty.style.display = 'none';
+    document.getElementById('cmdText').textContent =
+      `RUNNING > ${ticker} / ${timeframe.toUpperCase()} / ${asset_class.toUpperCase()}`;
+    animateStages();
+
+    try {
+      const res  = await fetch('/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticker, timeframe, asset_class })
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        showError('ERROR ' + res.status + ' — ' + (data.detail || 'PIPELINE FAILED'));
+        empty.style.display = 'flex';
+        return;
+      }
+
+      finishStages();
+      document.getElementById('cmdText').textContent =
+        `COMPLETE > ${ticker} — ${(data.report.recommendations || '').toUpperCase()}`;
+      renderResult(ticker, timeframe, asset_class, data.report);
+
+    } catch (err) {
+      showError('NETWORK ERROR — COULD NOT REACH PIPELINE');
+      empty.style.display = 'flex';
+      resetStages('ERROR');
+    } finally {
+      btn.classList.remove('loading');
+      btn.disabled = false;
+      btn.querySelector('.btn-label').textContent = 'RUN ANALYSIS <GO>';
+    }
+  }
+
+  function renderResult(ticker, timeframe, asset_class, report) {
+    document.getElementById('resTicker').textContent = ticker;
+    document.getElementById('resMeta').textContent =
+      `${timeframe.toUpperCase()} · ${asset_class.toUpperCase()} · LIVE MARKET DATA`;
+
+    const rec   = (report.recommendations || '').toLowerCase();
+    const recEl = document.getElementById('resRec');
+    recEl.textContent = (report.recommendations || '—').toUpperCase();
+    recEl.className   = 'rec-val ' +
+      (rec.includes('buy') ? 'buy' : rec.includes('sell') ? 'sell' : 'hold');
+
+    document.getElementById('resConf').textContent =
+      'CONFIDENCE: ' + (report.confidence || '—').toUpperCase();
+
+    document.getElementById('resSummary').textContent = report.summary || '—';
+
+    const ag      = report.analyst_agreement || '—';
+    const agEl    = document.getElementById('resAnalyst');
+    agEl.textContent = ag;
+    agEl.className   = 'analyst-text ' +
+      (ag.toLowerCase().startsWith('agreed') ? 'agreed' :
+       ag.toLowerCase().startsWith('disagreed') ? 'disagreed' : '');
+
+    const table = document.getElementById('resMetrics');
+    table.innerHTML = '';
+    (report.key_metrics || []).forEach(m => {
+      const idx   = m.indexOf(':');
+      const label = idx > -1 ? m.slice(0, idx).trim() : m;
+      const val   = idx > -1 ? m.slice(idx + 1).trim() : '—';
+      table.innerHTML += `<tr><td>${label}</td><td>${val}</td></tr>`;
+    });
+
+    document.getElementById('statusRow').innerHTML =
+      ['LANGGRAPH','LLAMA 3.3 70B','GROQ','YFINANCE','PYDANTIC V2','LANGSMITH']
+        .map(t => `<div class="status-chip">${t}</div>`).join('');
+
+    const resultEl = document.getElementById('result');
+    resultEl.style.display = 'block';
+    resultEl.classList.add('visible');
+    resultEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function showError(msg) {
+    const bar = document.getElementById('errorBar');
+    bar.textContent = '⚠  ' + msg;
+    bar.style.display = 'block';
+    resetStages('ERROR');
+  }
+</script>
+</body>
+</html>

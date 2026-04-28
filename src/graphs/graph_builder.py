@@ -1,5 +1,5 @@
 from langgraph.graph import StateGraph, START, END
-from src.llms.groqllm import GroqLLM
+from src.llms.llm_client import LLMClient
 from src.states.financestate import FinanceState
 from src.nodes.data_fetch import DataFetchAgent
 from src.nodes.fundamentals_agent import FundamentalsAgent
@@ -9,18 +9,21 @@ from src.nodes.report_agent import ReportAgent
 import os
 
 class GraphBuilder:
-    def __init__(self,llm):
-        self.llm = llm
-        self.graph = StateGraph(FinanceState)
+    def __init__(self):
+        self.llm_client = LLMClient()
+        self.fast_llm = self.llm_client.get_llm("fast")
+        self.smart_llm = self.llm_client.get_llm("smart")
+        self.graph = StateGraph(FinanceState) 
+
 
     def build_sequential_graph(self):
         #Initiate agents
 
         data_fetch = DataFetchAgent()
-        fundamentals = FundamentalsAgent(self.llm)
-        sentiment = SentimentAgent(self.llm)
-        risk = RiskDataAgent(self.llm)
-        report = ReportAgent(self.llm)
+        fundamentals = FundamentalsAgent(self.fast_llm)
+        sentiment = SentimentAgent(self.fast_llm)
+        risk = RiskDataAgent(self.fast_llm)
+        report = ReportAgent(self.smart_llm)
 
         # register nodes
         self.graph.add_node("data_fetch", data_fetch.fetch)
@@ -43,10 +46,10 @@ class GraphBuilder:
     def build_parallel_graph(self):
     #instantiate all agents
         data_fetch = DataFetchAgent()
-        fundamentals = FundamentalsAgent(self.llm)
-        sentiment = SentimentAgent(self.llm)
-        risk = RiskDataAgent(self.llm)
-        report = ReportAgent(self.llm)
+        fundamentals = FundamentalsAgent(self.fast_llm)
+        sentiment = SentimentAgent(self.fast_llm)
+        risk = RiskDataAgent(self.fast_llm)
+        report = ReportAgent(self.smart_llm)
 
         #register nodes
         self.graph.add_node("data_fetch", data_fetch.fetch)
@@ -73,7 +76,7 @@ class GraphBuilder:
 
         return self.graph
     
-    def setup_graph(self,mode="sequential"):
+    def setup_graph(self,mode="parallel"):
         if mode == "parallel":
             self.build_parallel_graph()
         else:

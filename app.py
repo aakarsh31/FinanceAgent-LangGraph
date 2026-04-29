@@ -1,7 +1,6 @@
 import uvicorn
 from fastapi import FastAPI, Request, HTTPException
 from src.graphs.graph_builder import GraphBuilder
-from src.llms.groqllm import GroqLLM
 from src.exceptions import FinanceAgentError
 
 from fastapi.staticfiles import StaticFiles
@@ -53,10 +52,7 @@ async def analyze_stock(request:Request):
         logger.error(f"Invalid asset class '{asset_class}'")
         raise HTTPException(status_code=422,detail=f"Invalid asset class : {asset_class}")
 
-    groqllm = GroqLLM()
-    llm = groqllm.get_llm()
-
-    graph_builder = GraphBuilder(llm)
+    graph_builder = GraphBuilder()
     graph = graph_builder.setup_graph()
 
     try:

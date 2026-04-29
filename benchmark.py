@@ -1,7 +1,6 @@
 import time
 import statistics
 from src.graphs.graph_builder import GraphBuilder
-from src.llms.groqllm import GroqLLM
 
 def run_benchmark(graph, runs=5):
     times = []
@@ -18,11 +17,10 @@ def run_benchmark(graph, runs=5):
         print(f"  Run {i+1}: {elapsed:.2f}s")
     return times
 
-if __name__ == "__main__":
-    llm = GroqLLM().get_llm()
-    
+if __name__ == "__main__": 
+
     print("🔄 Benchmarking SEQUENTIAL graph...")
-    graph_builder = GraphBuilder(llm)
+    graph_builder = GraphBuilder()
     sequential_graph = graph_builder.setup_graph()
     seq_times = run_benchmark(sequential_graph)
     
@@ -32,7 +30,7 @@ if __name__ == "__main__":
     print(f"   Max: {max(seq_times):.2f}s")
 
     print("\n⚡ Benchmarking PARALLEL graph...")
-    graph_builder2 = GraphBuilder(llm)
+    graph_builder2 = GraphBuilder()
     parallel_graph = graph_builder2.setup_graph(mode="parallel")
     par_times = run_benchmark(parallel_graph)
 

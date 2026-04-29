@@ -23,7 +23,6 @@ from collections import Counter
 from dotenv import load_dotenv
 
 from src.graphs.graph_builder import GraphBuilder
-from src.llms.groqllm import GroqLLM
 from src.exceptions import FinanceAgentError
 
 # ── Setup ─────────────────────────────────────────────────────────────────────
@@ -48,7 +47,7 @@ TICKERS = [
 ]
 
 RUNS_PER_TICKER   = 1       # majority vote over this many runs
-SLEEP_BETWEEN_RUNS = 3      # seconds — Groq rate limit buffer
+SLEEP_BETWEEN_RUNS = 1      # seconds — OpenAI limit buffer
 TIMEFRAME          = "3mo"
 ASSET_CLASS        = "equity"
 
@@ -80,9 +79,7 @@ def run_pipeline(graph, ticker: str, _retry: bool = False) -> str | None:
     Run the pipeline once for a ticker.
     Returns 'Agreed' | 'Disagreed' | 'Unknown', or None on pipeline error.
 
-    Handles two Groq rate limit types:
-      - TPM (tokens per minute) → 3s sleep between runs handles this
-      - TPD (tokens per day)    → detected here, waits 6 min then retries once
+    Handles OPENAI rate limit types:
     """
     try:
         state = graph.invoke({
@@ -107,15 +104,15 @@ def run_pipeline(graph, ticker: str, _retry: bool = False) -> str | None:
         logger.warning(f"{ticker}: FinanceAgentError — {e}")
         return None
     except Exception as e:
-        # Fix 1: detect daily token limit (TPD) — pause 6 min then retry once
-        if "tokens per day" in str(e):
+        err_str = str(e).lower()
+        if "rate limit" in err_str or "too many requests" in err_str:
             if not _retry:
-                wait = 360  # 6 minutes — safely clears the rolling window
-                print(f"  ⏳ Daily token limit hit — waiting {wait}s ({wait//60} min) before retry...")
+                wait = 60
+                print(f"  ⏳ Rate limit hit — waiting {wait}s before retry...")
                 time.sleep(wait)
-                return run_pipeline(graph, ticker, _retry=True)  # retry once
+                return run_pipeline(graph, ticker, _retry=True)
             else:
-                print(f"  ❌ Daily token limit still hit after retry — skipping {ticker}")
+                print(f"  ❌ Rate limit still hit after retry — skipping {ticker}")
                 return None
         logger.warning(f"{ticker}: Unexpected error — {e}")
         return None
@@ -210,8 +207,7 @@ def main():
 
     # Build graph once — reuse across all tickers and runs
     print("\n🔧 Initialising pipeline...")
-    llm   = GroqLLM().get_llm()
-    graph = GraphBuilder(llm).setup_graph()
+    graph = GraphBuilder().setup_graph()
     print("✅ Pipeline ready\n")
 
     results = []

@@ -12,3 +12,4 @@ wheels/
 #environment variables
 .env
 
+checkpoints.db

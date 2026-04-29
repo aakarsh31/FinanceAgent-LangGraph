@@ -8,6 +8,18 @@ from src.nodes.risk_agent import RiskDataAgent
 from src.nodes.report_agent import ReportAgent
 import os
 
+def route_by_asset_class(state: FinanceState) -> list[str]:
+    if state['asset_class'] == "equity":
+        return ["fundamentals_agent","sentiment_agent","risk_agent"]
+
+    elif state['asset_class'] == "crypto":
+        return ["sentiment_agent","risk_agent"]
+    
+    elif state['asset_class'] == "macro":
+        return ["fundamentals_agent","sentiment_agent","risk_agent"]
+    else:
+        raise ValueError(f"Invalid asset class '{state['asset_class']}'. Valid: 'equity', 'crypto', 'macro'")
+        
 class GraphBuilder:
     def __init__(self):
         self.llm_client = LLMClient()
@@ -62,9 +74,10 @@ class GraphBuilder:
         self.graph.add_edge(START, "data_fetch")
 
         #DataFetch feeds three agents simultaneously
-        self.graph.add_edge("data_fetch", "fundamentals_agent")
-        self.graph.add_edge("data_fetch", "sentiment_agent")
-        self.graph.add_edge("data_fetch", "risk_agent")
+        self.graph.add_conditional_edges(
+            "data_fetch",           # source node
+            route_by_asset_class,   # router function
+        )
 
         #all three feed into report
         self.graph.add_edge("fundamentals_agent", "report_agent")
@@ -83,4 +96,7 @@ class GraphBuilder:
             self.build_sequential_graph()
         return self.graph.compile()
        
+    
+
+
     

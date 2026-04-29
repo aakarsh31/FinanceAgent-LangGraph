@@ -17,7 +17,16 @@ class ReportAgent():
 
 
         ticker = state['ticker']
-
+        fundamentals = state.get('fundamentals')
+        if fundamentals:
+            fundamentals_section = f"""
+                - P/E Ratio: {fundamentals.PE_ratio}
+                - EPS: {fundamentals.EPS}
+                - Revenue Growth: {fundamentals.revenue_growth}%
+                - Debt to Equity: {fundamentals.debt_to_equity}"""
+        else:
+            fundamentals_section = "No fundamental data available for this asset class."
+            
         consensus = state.get("analyst_consensus") or {}
         recommendation = consensus.get("recommendation") or "unavailable"
         target_price = consensus.get("target_price") or "unavailable"
@@ -29,10 +38,7 @@ class ReportAgent():
         Ticker: {state['ticker']}
 
         FUNDAMENTALS:
-        - P/E Ratio: {state['fundamentals'].PE_ratio}
-        - EPS: {state['fundamentals'].EPS}
-        - Revenue Growth: {state['fundamentals'].revenue_growth}%
-        - Debt to Equity: {state['fundamentals'].debt_to_equity}
+        {fundamentals_section}
 
         SENTIMENT:
         - Score: {state['sentiment'].sentiment_score}

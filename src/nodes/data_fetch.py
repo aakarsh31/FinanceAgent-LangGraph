@@ -48,7 +48,12 @@ class DataFetchAgent:
             if not analyst_consensus.get("recommendation"):
                 logger.warning(f"No analyst consensus available for {ticker}")
 
-            history = stock.history(period=timeframe).to_dict()
+            raw_history = stock.history(period=timeframe).to_dict()
+            # Checkpointer requires string keys — pandas Timestamps must be converted
+            history = {
+                col: {str(ts): val for ts, val in rows.items()}
+                for col, rows in raw_history.items()
+            }
             news = stock.news
         except Exception as e:
             logger.error(f"Failed to fetch data for {ticker}: {e}", exc_info=True)

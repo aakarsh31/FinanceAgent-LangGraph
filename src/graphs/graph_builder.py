@@ -89,14 +89,9 @@ class GraphBuilder:
 
         return self.graph
     
-    def setup_graph(self,mode="parallel"):
+    def setup_graph(self, mode="parallel", checkpointer=None):
         if mode == "parallel":
             self.build_parallel_graph()
         else:
             self.build_sequential_graph()
-        return self.graph.compile()
-       
-    
-
-
-    
+        return self.graph.compile(checkpointer=checkpointer)

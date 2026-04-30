@@ -193,7 +193,7 @@ def print_results_table(results: list[dict]):
     print(f"   Disagreed         : {disagreed_count}")
     print(f"   Unknown / failed  : {unknown_count}")
     print(f"\n   Agreement rate    : {pct:.1f}%  ({agreed_count}/{total_decided} decided tickers)")
-    print(f"\n   Resume bullet →")
+
     print(f'   "Pipeline achieved {pct:.0f}% agreement with Wall Street consensus across {total_decided} tickers"\n')
 
 

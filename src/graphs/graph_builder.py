@@ -94,4 +94,7 @@ class GraphBuilder:
             self.build_parallel_graph()
         else:
             self.build_sequential_graph()
-        return self.graph.compile(checkpointer=checkpointer)
+        return self.graph.compile(
+        checkpointer=checkpointer,
+        interrupt_before=["report_agent"]
+        )

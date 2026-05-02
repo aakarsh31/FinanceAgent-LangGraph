@@ -131,11 +131,40 @@ async def analyze_stock(request: Request):
         logger.error(f"Unexpected error for {ticker}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal pipeline error")
 
-    logger.info(f"Successfully analyzed {ticker}")
+    logger.info(f"Pipeline paused before report_agent for {ticker} — awaiting approval")
     return {
+        "status": "pending_approval",
+        "thread_id": thread_id,
         "ticker": ticker,
+        "intermediate": {
+            "fundamentals": state.get("fundamentals"),
+            "sentiment": state.get("sentiment"),
+            "risk": state.get("risk"),
+            "analyst_consensus": state.get("analyst_consensus")
+        }
+    }
+
+@app.post("/approve/{thread_id}")
+async def approve_report(thread_id: str):
+    config = {"configurable": {"thread_id": thread_id}}
+
+    try:
+        state = graph.invoke(None, config=config)
+    except FinanceAgentError as e:
+        logger.error(f"Report generation failed for {thread_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error resuming {thread_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal pipeline error")
+
+    logger.info(f"Report approved and generated for thread {thread_id}")
+    return {
+        "status": "complete",
+        "thread_id": thread_id,
+        "ticker": state["ticker"],
         "report": state["report"]
     }
+
 
 if __name__ == "__main__":
     uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)

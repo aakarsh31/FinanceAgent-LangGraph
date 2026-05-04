@@ -25,6 +25,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 os.environ["LANGSMITH_API_KEY"] = os.getenv("LANGCHAIN_API_KEY", "")
+os.environ["LANGCHAIN_TRACING_V2"] = "true"
+os.environ["LANGCHAIN_PROJECT"] = os.getenv("LANGCHAIN_PROJECT", "FinanceAgent-MultiAgent")
 
 VALID_TIMEFRAMES = ["1mo", "3mo", "6mo", "1y", "2y"]
 

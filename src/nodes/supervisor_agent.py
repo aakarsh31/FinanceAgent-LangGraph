@@ -3,6 +3,7 @@ from langchain_core.messages import HumanMessage
 from src.states.financestate import FinanceState, SupervisorReport
 from src.exceptions import LLMStructuredOutputError
 
+
 logger = logging.getLogger(__name__)
 
 class _D(dict):
@@ -65,6 +66,9 @@ Your output:
 - bull_case: 2-3 sentences distilling the strongest bull arguments
 - bear_case: 2-3 sentences distilling the strongest bear arguments
 - recommendation: exactly one of 'Buy', 'Hold', or 'Sell'
+  If bull confidence is High and analyst consensus is Buy, 
+  lean Buy unless valuation is Overvalued or macro is Risk-Off.
+  Avoid defaulting to Hold when evidence is mixed — make a call.
 - confidence: 'High', 'Medium', or 'Low'
 - key_metrics: list of 6-8 metrics with actual values e.g. ['P/E: 31.2', 'Beta: 1.4', 'Regime: Risk-Off Tightening']
 - analyst_agreement: compare your recommendation to Wall Street consensus
@@ -117,7 +121,8 @@ class SupervisorAgent:
     def __init__(self, llm):
         self.llm = llm.with_structured_output(SupervisorReport)
 
-    def analyze(self, state: FinanceState) -> dict:
+
+    def analyze(self, state: FinanceState, **kwargs) -> dict:
         ticker = state["ticker"]
         asset_class = state.get("asset_class", "equity")
         logger.info(f"SupervisorAgent starting for {ticker} (asset_class={asset_class})...")

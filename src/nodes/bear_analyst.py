@@ -3,6 +3,7 @@ from langchain_core.messages import HumanMessage
 from src.states.financestate import FinanceState, BearThesis
 from src.exceptions import LLMStructuredOutputError
 
+
 logger = logging.getLogger(__name__)
 
 class _D(dict):
@@ -52,7 +53,7 @@ class BearAnalyst:
     def __init__(self, llm):
         self.llm = llm.with_structured_output(BearThesis)
 
-    def analyze(self, state: FinanceState) -> dict:
+    def analyze(self, state: FinanceState, **kwargs) -> dict:
         ticker = state["ticker"]
         logger.info(f"BearAnalyst starting for {ticker}...")
 

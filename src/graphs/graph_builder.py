@@ -15,25 +15,16 @@ from src.nodes.onchain_analyst import OnChainAnalyst
 from src.nodes.supervisor_agent import SupervisorAgent
 
 
-# ── Routing function 
-
 def route_by_asset_class(state: FinanceState) -> list[str]:
     asset_class = state["asset_class"]
-
     if asset_class == "equity":
-        # Parallel: fundamentals, sentiment, risk all fire simultaneously
         return ["fundamentals_agent", "sentiment_agent", "risk_agent"]
-
     elif asset_class == "crypto":
-        # Parallel: onchain and sentiment fire simultaneously
         return ["onchain_analyst", "sentiment_agent", "risk_agent"]
-
     else:
         raise ValueError(
             f"Invalid asset_class '{asset_class}' in state. "
-            f"Expected 'equity' or 'crypto'. "
-            f"asset_class is set by DataFetchAgent from yfinance quoteType — "
-            f"check that the ticker is a supported instrument."
+            f"Expected 'equity' or 'crypto'."
         )
 
 
@@ -41,13 +32,12 @@ class GraphBuilder:
 
     def __init__(self):
         self.llm_client = LLMClient()
-        self.fast_llm  = self.llm_client.get_llm("fast")
+        self.fast_llm = self.llm_client.get_llm("fast")
         self.smart_llm = self.llm_client.get_llm("smart")
 
     def build(self):
         graph = StateGraph(FinanceState)
 
-        # ── Instantiate all agents ────────────────────────────────────────────
         data_fetch = DataFetchAgent()
         macro = MacroRegimeAgent(self.fast_llm)
         fundamentals = FundamentalsAgent(self.fast_llm)
@@ -59,7 +49,6 @@ class GraphBuilder:
         onchain = OnChainAnalyst(self.fast_llm)
         supervisor = SupervisorAgent(self.smart_llm)
 
-        # ── Register nodes ────────────────────────────────────────────────────
         graph.add_node("data_fetch", data_fetch.fetch)
         graph.add_node("macro_regime_agent", macro.analyze)
         graph.add_node("fundamentals_agent", fundamentals.analyze)
@@ -71,53 +60,36 @@ class GraphBuilder:
         graph.add_node("onchain_analyst", onchain.analyze)
         graph.add_node("supervisor_agent", supervisor.analyze)
 
-        # ── Wire edges ────────────────────────────────────────────────────────
-
-        # Step 1: data_fetch always runs first
         graph.add_edge(START, "data_fetch")
-
-        # Step 2: macro always runs after data_fetch, before everything else
         graph.add_edge("data_fetch", "macro_regime_agent")
+        graph.add_conditional_edges("macro_regime_agent", route_by_asset_class)
 
-        # Step 3: after macro, fan out by asset class
-        # conditional edges route to the correct parallel group
-        graph.add_conditional_edges(
-            "macro_regime_agent",
-            route_by_asset_class,
-        )
-
-
+        # equity wave 1 → wave 2
         graph.add_edge("fundamentals_agent", "bull_analyst")
         graph.add_edge("fundamentals_agent", "bear_analyst")
         graph.add_edge("fundamentals_agent", "valuation_analyst")
-
         graph.add_edge("sentiment_agent", "bull_analyst")
         graph.add_edge("sentiment_agent", "bear_analyst")
         graph.add_edge("sentiment_agent", "valuation_analyst")
-
         graph.add_edge("risk_agent", "bull_analyst")
         graph.add_edge("risk_agent", "bear_analyst")
         graph.add_edge("risk_agent", "valuation_analyst")
 
-        # Wave 2 → supervisor
+        # wave 2 → supervisor
         graph.add_edge("bull_analyst", "supervisor_agent")
         graph.add_edge("bear_analyst", "supervisor_agent")
         graph.add_edge("valuation_analyst", "supervisor_agent")
 
-        # ── Crypto path ───────────────────────────────────────────────────────
-        # onchain, sentiment, risk run in parallel → supervisor
+        # crypto → supervisor
         graph.add_edge("onchain_analyst", "supervisor_agent")
 
-        # sentiment_agent and risk_agent feed supervisor from both paths
-
-        # ── Supervisor → End ──────────────────────────────────────────────────
         graph.add_edge("supervisor_agent", END)
 
         return graph
 
-    def setup_graph(self, checkpointer=None):
+    def setup_graph(self, checkpointer=None, hitl: bool = True):
         graph = self.build()
         return graph.compile(
             checkpointer=checkpointer,
-            interrupt_before=["supervisor_agent"],
+            interrupt_before=["supervisor_agent"] if hitl else [],
         )

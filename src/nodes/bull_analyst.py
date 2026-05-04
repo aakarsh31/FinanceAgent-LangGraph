@@ -3,6 +3,7 @@ from langchain_core.messages import HumanMessage
 from src.states.financestate import FinanceState, BullThesis
 from src.exceptions import LLMStructuredOutputError
 
+
 logger = logging.getLogger(__name__)
 
 class _D(dict):
@@ -52,7 +53,8 @@ class BullAnalyst:
     def __init__(self, llm):
         self.llm = llm.with_structured_output(BullThesis)
 
-    def analyze(self, state: FinanceState) -> dict:
+
+    def analyze(self, state: FinanceState, **kwargs) -> dict:
         ticker = state["ticker"]
         logger.info(f"BullAnalyst starting for {ticker}...")
 

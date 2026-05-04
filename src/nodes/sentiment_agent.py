@@ -3,6 +3,7 @@ from langchain_core.messages import HumanMessage
 from src.states.financestate import FinanceState, SentimentData
 from src.exceptions import LLMStructuredOutputError
 
+
 logger = logging.getLogger(__name__)
 
 SENTIMENT_PROMPT_EQUITY = """You are the Sentiment Analyst at an investment research firm.
@@ -40,7 +41,8 @@ class SentimentAgent:
     def __init__(self, llm):
         self.llm = llm.with_structured_output(SentimentData)
 
-    def analyze(self, state: FinanceState) -> dict:
+
+    def analyze(self, state: FinanceState, **kwargs) -> dict:
         ticker = state["ticker"]
         asset_class = state.get("asset_class", "equity")
         headlines = state.get("news_headlines", [])

@@ -3,6 +3,7 @@ import os
 import requests
 import yfinance as yf
 
+
 from src.exceptions import DataFetchRateLimitError, EmptyDataError, TickerNotFoundError
 from src.states.financestate import AnalystConsensus, FinanceState
 
@@ -36,8 +37,7 @@ FRED_SERIES = {
 
 
 class DataFetchAgent:
-
-    def fetch(self, state: FinanceState):
+    def fetch(self, state: FinanceState, **kwargs):
         ticker = state["ticker"]
         timeframe = state["timeframe"]
 

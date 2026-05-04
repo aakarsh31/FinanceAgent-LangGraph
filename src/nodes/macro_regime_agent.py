@@ -50,7 +50,7 @@ class MacroRegimeAgent:
     def __init__(self, llm):
         self.llm = llm.with_structured_output(MacroRegimeData)
 
-    def analyze(self, state: FinanceState) -> dict:
+    def analyze(self, state: FinanceState, **kwargs) -> dict:
         logger.info("MacroRegimeAgent starting...")
 
         fred = state["raw_data"].get("fred")

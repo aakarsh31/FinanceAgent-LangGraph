@@ -3,6 +3,7 @@ from langchain_core.messages import HumanMessage
 from src.states.financestate import FinanceState, ValuationData
 from src.exceptions import LLMStructuredOutputError
 
+
 logger = logging.getLogger(__name__)
 
 class _D(dict):
@@ -50,7 +51,7 @@ class ValuationAnalyst:
     def __init__(self, llm):
         self.llm = llm.with_structured_output(ValuationData)
 
-    def analyze(self, state: FinanceState) -> dict:
+    def analyze(self, state: FinanceState, **kwargs) -> dict:
         ticker = state["ticker"]
         logger.info(f"ValuationAnalyst starting for {ticker}...")
 

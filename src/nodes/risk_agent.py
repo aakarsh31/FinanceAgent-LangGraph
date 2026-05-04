@@ -57,10 +57,10 @@ class RiskDataAgent:
 
         history_df = pd.DataFrame(state["raw_data"]["history"])
         daily_returns = history_df["Close"].pct_change()
-        volatility = round(daily_returns.std() * (252 ** 0.5) * 100, 2)
+        volatility = volatility = float(round(daily_returns.std() * (252 ** 0.5) * 100, 2))
 
         info = state["raw_data"]["info"]
-        beta = info.get("beta")
+        beta = float(info.get("beta")) if info.get("beta") is not None else None
         macro = _w(state.get("macro"))
 
         def fmt(val, suffix="") -> str:

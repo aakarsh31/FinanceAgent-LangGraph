@@ -5,6 +5,12 @@ from src.exceptions import LLMStructuredOutputError
 
 logger = logging.getLogger(__name__)
 
+class _D(dict):
+    def __getattr__(self, k): return self.get(k)
+    def __bool__(self): return len(self) > 0
+
+def _w(v): return _D(v) if isinstance(v, dict) else v
+
 BULL_PROMPT = """You are the Bull Analyst at an investment research firm.
 Your role is to construct the strongest possible bull case for {ticker}.
 You are NOT a balanced analyst — your job is to find and articulate the most
@@ -38,7 +44,6 @@ Your output:
 - thesis: A compelling 3-4 sentence bull case narrative grounded in the data above
 - confidence: Your conviction level — 'High', 'Medium', or 'Low'
 - key_catalysts: 3-5 specific, concrete catalysts that support the upside case
-  (e.g. 'Revenue growth accelerating at {revenue_growth} YoY', 'Analyst consensus Buy with ${target_price} target')
 """
 
 
@@ -51,36 +56,30 @@ class BullAnalyst:
         ticker = state["ticker"]
         logger.info(f"BullAnalyst starting for {ticker}...")
 
-        info = state["raw_data"].get("info", {})
-        macro = state.get("macro")
-        sentiment = state.get("sentiment")
-        fundamentals = state.get("fundamentals")
-        consensus = state.get("analyst_consensus")
+        macro = _w(state.get("macro"))
+        sentiment = _w(state.get("sentiment"))
+        fundamentals = _w(state.get("fundamentals"))
+        consensus = _w(state.get("analyst_consensus"))
         headlines = state.get("news_headlines", [])
 
         def fmt(val, suffix="") -> str:
             return f"{val}{suffix}" if val is not None else "unavailable"
 
         prompt = BULL_PROMPT.format(
-            ticker = ticker,
-            # Macro
-            regime_label = fmt(macro.regime_label if macro else None),
-            regime_summary = fmt(macro.regime_summary if macro else None),
-            # Fundamentals
-            pe_ratio = fmt(fundamentals.PE_ratio if fundamentals else None),
-            eps = fmt(fundamentals.EPS if fundamentals else None, " USD"),
-            revenue_growth = fmt(fundamentals.revenue_growth if fundamentals else None),
-            debt_to_equity = fmt(fundamentals.debt_to_equity if fundamentals else None),
-            # Sentiment
-            sentiment_score = fmt(sentiment.sentiment_score if sentiment else None),
-            sentiment_label = fmt(sentiment.sentiment_label if sentiment else None),
-            sentiment_reasoning = fmt(sentiment.sentiment_reasoning if sentiment else None),
-            # Analyst consensus
-            analyst_recommendation = fmt(consensus.recommendation if consensus else None),
-            target_price = fmt(consensus.target_price if consensus else None, " USD"),
-            num_analysts = fmt(consensus.num_analysts if consensus else None),
-            # Headlines
-            headlines = "\n".join(f"- {h}" for h in headlines[:10]) or "No headlines available",
+            ticker=ticker,
+            regime_label=fmt(macro.regime_label if macro else None),
+            regime_summary=fmt(macro.regime_summary if macro else None),
+            pe_ratio=fmt(fundamentals.PE_ratio if fundamentals else None),
+            eps=fmt(fundamentals.EPS if fundamentals else None, " USD"),
+            revenue_growth=fmt(fundamentals.revenue_growth if fundamentals else None),
+            debt_to_equity=fmt(fundamentals.debt_to_equity if fundamentals else None),
+            sentiment_score=fmt(sentiment.sentiment_score if sentiment else None),
+            sentiment_label=fmt(sentiment.sentiment_label if sentiment else None),
+            sentiment_reasoning=fmt(sentiment.sentiment_reasoning if sentiment else None),
+            analyst_recommendation=fmt(consensus.recommendation if consensus else None),
+            target_price=fmt(consensus.target_price if consensus else None, " USD"),
+            num_analysts=fmt(consensus.num_analysts if consensus else None),
+            headlines="\n".join(f"- {h}" for h in headlines[:10]) or "No headlines available",
         )
 
         try:
@@ -90,5 +89,4 @@ class BullAnalyst:
             raise LLMStructuredOutputError(f"BullAnalyst failed to produce structured output: {e}")
 
         logger.info(f"BullAnalyst complete for {ticker} — confidence={result.confidence} catalysts={len(result.key_catalysts)}")
-
-        return {"bull_thesis": result}
+        return {"bull_thesis": result.model_dump()}

@@ -1,12 +1,13 @@
 from src.states.financestate import FinanceState,FundamentalsData
 from langchain_core.messages import HumanMessage
 
+
 class FundamentalsAgent:
 
     def __init__(self,llm):
         self.llm = llm
-    
-    def analyze(self,state:FinanceState):
+
+    def analyze(self, state:FinanceState, **kwargs):
         info = state["raw_data"]["info"]
 
         relevant_data = {

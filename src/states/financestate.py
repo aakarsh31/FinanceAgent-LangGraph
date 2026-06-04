@@ -217,5 +217,10 @@ class FinanceState(TypedDict):
     sentiment: Optional[SentimentData]
     onchain: Optional[OnChainData]
 
+    # ── Data provenance (injected by DataFetchAgent) ──────────────────────────
+    # Carries source + age annotations for each data type.
+    # e.g. {"fundamentals": "Data sourced from fmp, 3.2 hours old.", ...}
+    data_provenance: Optional[dict]
+
     # ── Final output ───────────────────────────────────────────────────────────
     supervisor_report: Optional[SupervisorReport]

@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse
 from src.graphs.graph_builder import GraphBuilder
 from src.exceptions import FinanceAgentError
 from langgraph.checkpoint.sqlite import SqliteSaver
+from ingestion.db import get_engine, init_db
 
 import os
 from dotenv import load_dotenv
@@ -86,11 +87,29 @@ async def lifespan(app: FastAPI):
     global graph
     init_meta_table()
     cleanup_old_checkpoints()
+
+    # Initialize Postgres — non-fatal if DATABASE_URL is not set
+    # (allows local dev without Postgres; agents fall back to live API)
+    pg_engine = None
+    if os.getenv("DATABASE_URL"):
+        try:
+            pg_engine = get_engine()
+            init_db(pg_engine)
+            logger.info("Postgres engine initialized")
+        except Exception as e:
+            logger.warning(f"Postgres initialization failed (non-fatal): {e} — agents will use live API fallback")
+    else:
+        logger.warning("DATABASE_URL not set — running without Postgres cache")
+
     with SqliteSaver.from_conn_string("checkpoints.db") as checkpointer:
-        graph_builder = GraphBuilder()
+        graph_builder = GraphBuilder(engine=pg_engine)
         graph = graph_builder.setup_graph(checkpointer=checkpointer)
         logger.info("Graph compiled with SqliteSaver checkpointer")
         yield
+
+    if pg_engine:
+        pg_engine.dispose()
+        logger.info("Postgres engine disposed")
     logger.info("Checkpointer connection closed")
 
 
@@ -175,6 +194,7 @@ async def analyze(request: Request):
         "ticker": ticker,
         "asset_class": asset_class,
         "intermediate": intermediate,
+        "data_provenance": state.get("data_provenance", {}),
     }
 
 

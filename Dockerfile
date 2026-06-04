@@ -18,5 +18,6 @@ COPY . .
 # Expose port
 EXPOSE 8000
 
-# Run with uvicorn
-CMD ["uv", "run", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+# No CMD here — Railway start command controls this per-service:
+# web:    uv run uvicorn app:app --host 0.0.0.0 --port 8000
+# worker: uv run python worker.py

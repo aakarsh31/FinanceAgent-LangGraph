@@ -36,7 +36,7 @@ from ingestion.db import (
     raw_news,
     raw_macro,
 )
-from ingestion.ingestion_client import FMPClient, FinnhubClient, batch_sleep
+from ingestion.ingestion_client import FMPClient, batch_sleep
 from ingestion.models import IngestionResult
 
 logger = logging.getLogger(__name__)
@@ -221,11 +221,11 @@ def run_fundamentals_ingestion(engine: Engine) -> IngestionResult:
 
 def run_news_ingestion(engine: Engine) -> IngestionResult:
     """
-    Nightly Finnhub news ingestion.
-    Fetches last 24h of company news for each ticker in universe.
+    Nightly FMP news ingestion.
+    Fetches latest company news for each ticker in universe via FMP stable endpoint.
     """
     result = IngestionResult(job_name="news")
-    client = FinnhubClient()
+    client = FMPClient()
     universe = get_tonight_universe(engine)
 
     logger.info(f"[news] Starting ingestion for {len(universe)} tickers")
@@ -250,7 +250,7 @@ def run_news_ingestion(engine: Engine) -> IngestionResult:
                 raw_insert = conn.execute(
                     raw_news.insert().values(
                         ticker=ticker,
-                        source="finnhub",
+                        source="fmp_news",
                         fetched_at=datetime.now(timezone.utc),
                         raw_json=raw_json,
                     )
@@ -258,7 +258,7 @@ def run_news_ingestion(engine: Engine) -> IngestionResult:
                 raw_id = raw_insert.inserted_primary_key[0]
 
                 # Write processed articles
-                processed_articles = client.to_processed(articles, ticker, raw_id)
+                processed_articles = client.to_processed_news(articles, ticker, raw_id)
                 rows_written = 0
                 for article in processed_articles:
                     conn.execute(
@@ -273,7 +273,7 @@ def run_news_ingestion(engine: Engine) -> IngestionResult:
                     )
                     rows_written += 1
 
-                upsert_freshness(conn, ticker, "news", "finnhub", rows_written, "fresh")
+                upsert_freshness(conn, ticker, "news", "fmp_news", rows_written, "fresh")
                 conn.commit()
 
             result.tickers_succeeded += 1
@@ -428,4 +428,4 @@ def build_scheduler(engine: Engine) -> BlockingScheduler:
         coalesce=True,
     )
 
-    return scheduler 
+    return scheduler

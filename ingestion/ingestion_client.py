@@ -70,27 +70,17 @@ class FMPClient:
 
             profile = data[0]
 
-            # /stable/ratios-ttm?symbol=AAPL — revenue growth, D/E
-            ratios_url = f"{self.BASE_URL}/ratios-ttm"
-            ratios_resp = self.session.get(
-                ratios_url,
-                params={"symbol": ticker, "apikey": self.api_key},
-                timeout=10,
-            )
-            ratios_resp.raise_for_status()
-            ratios_data = ratios_resp.json()
-            ratios = ratios_data[0] if ratios_data and isinstance(ratios_data, list) else {}
-
-            merged = {**profile, **ratios}
-            raw_json = json.dumps(merged)
+            # ratios-ttm requires paid plan — get what we can from profile
+            # profile includes pe, eps, mktCap, sector on free tier
+            raw_json = json.dumps(profile)
 
             validated = RawFMPFundamentals(
                 symbol=profile.get("symbol"),
                 companyName=profile.get("companyName"),
                 pe=profile.get("pe"),
                 eps=profile.get("eps"),
-                revenueGrowth=ratios.get("revenueGrowthTTM"),
-                debtToEquity=ratios.get("debtEquityRatioTTM"),
+                revenueGrowth=profile.get("revenueGrowth"),       # available in profile on free tier
+                debtToEquity=profile.get("debtToEquityRatio"),    # available in profile on free tier
                 mktCap=profile.get("mktCap"),
                 sector=profile.get("sector"),
             )

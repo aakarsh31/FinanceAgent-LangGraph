@@ -183,7 +183,7 @@ def run_fundamentals_ingestion(engine: Engine) -> IngestionResult:
                 raw_id = raw_insert.inserted_primary_key[0]
 
                 # Write processed
-                processed = client.to_processed(raw_model, ticker, raw_id)
+                processed = client.to_processed_fundamentals(raw_model, ticker, raw_id)
                 conn.execute(
                     processed_fundamentals.insert().values(
                         ticker=processed.ticker,

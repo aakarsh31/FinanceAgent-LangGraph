@@ -30,15 +30,16 @@ def route_by_asset_class(state: FinanceState) -> list[str]:
 
 class GraphBuilder:
 
-    def __init__(self):
+    def __init__(self, engine=None):
         self.llm_client = LLMClient()
         self.fast_llm = self.llm_client.get_llm("fast")
         self.smart_llm = self.llm_client.get_llm("smart")
+        self.engine = engine  # SQLAlchemy engine — None falls back to live API
 
     def build(self):
         graph = StateGraph(FinanceState)
 
-        data_fetch = DataFetchAgent()
+        data_fetch = DataFetchAgent(engine=self.engine)
         macro = MacroRegimeAgent(self.fast_llm)
         fundamentals = FundamentalsAgent(self.fast_llm)
         sentiment = SentimentAgent(self.fast_llm)

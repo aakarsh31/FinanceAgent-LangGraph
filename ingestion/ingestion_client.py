@@ -291,5 +291,10 @@ class FinnhubClient:
 
 # ── Rate limiting helper ──────────────────────────────────────────────────────
 
-def batch_sleep(seconds: float = 0.25) -> None:
+def batch_sleep(seconds: float = 3.0) -> None:
+    """
+    FMP free tier: ~10 calls/minute = 1 call per 6 seconds to be safe.
+    We use 3s as a middle ground — still completes 100 tickers in ~5 mins.
+    Upgrade to paid tier to remove this bottleneck.
+    """
     time.sleep(seconds)

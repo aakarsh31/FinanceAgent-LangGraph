@@ -97,7 +97,7 @@ def main():
     scheduler = build_scheduler(engine)
     logger.info("Scheduler built — jobs registered:")
     for job in scheduler.get_jobs():
-        logger.info(f"  {job.name} → next run: {job.next_run_time}")
+        logger.info(f"  {job.name} → id: {job.id}")
 
     logger.info("Starting blocking scheduler — worker is live")
     try:
@@ -105,7 +105,6 @@ def main():
     except (KeyboardInterrupt, SystemExit):
         logger.info("Worker shutting down gracefully")
         scheduler.shutdown()
-
 
 
 if __name__ == "__main__":

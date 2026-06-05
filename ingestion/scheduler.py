@@ -47,27 +47,23 @@ logger = logging.getLogger(__name__)
 # Crypto handled separately via CoinGecko (already reliable — no replacement needed).
 
 BASE_EQUITY_UNIVERSE = [
-    # Mega cap tech
-    "AAPL", "MSFT", "NVDA", "GOOGL", "GOOG", "AMZN", "META", "TSLA", "AVGO", "ORCL",
+    # Mega cap tech — highest query volume, highest priority
+    "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA",
     # Financials
-    "JPM", "V", "MA", "BAC", "WFC", "GS", "MS", "BLK", "SCHW", "AXP",
+    "JPM", "V", "BAC", "GS",
     # Healthcare
-    "LLY", "UNH", "JNJ", "ABBV", "MRK", "TMO", "ABT", "DHR", "PFE", "AMGN",
+    "LLY", "UNH", "JNJ", "PFE",
     # Consumer
-    "COST", "WMT", "PG", "KO", "PEP", "MCD", "NKE", "SBUX", "TGT", "HD",
-    # Industrials
-    "CAT", "DE", "HON", "RTX", "LMT", "GE", "UPS", "FDX", "BA", "MMM",
-    # Energy
-    "XOM", "CVX", "COP", "SLB", "EOG", "PXD", "MPC", "PSX", "VLO", "OXY",
+    "COST", "WMT", "PG", "KO", "MCD",
+    # ETFs — always high query volume
+    "SPY", "QQQ", "IWM",
     # Semiconductors
-    "AMD", "INTC", "QCOM", "MU", "AMAT", "LRCX", "KLAC", "MRVL", "TXN", "ADI",
+    "AMD", "INTC", "QCOM",
     # Tech / SaaS
-    "CRM", "ADBE", "NOW", "INTU", "PANW", "SNOW", "PLTR", "NET", "DDOG", "ZS",
-    # ETFs
-    "SPY", "QQQ", "IWM", "DIA", "VTI", "VOO", "GLD", "TLT", "HYG", "EEM",
-    # Communications
-    "NFLX", "DIS", "CMCSA", "T", "VZ", "TMUS", "CHTR", "PARA", "WBD", "EA",
+    "CRM", "ADBE", "NFLX",
 ]
+# NOTE: Universe kept at 30 tickers for FMP free tier (10 calls/min).
+# Expand to 100 when upgrading to paid plan.
 
 MISS_PROMOTION_THRESHOLD = 3   # promote ticker if missed 3+ times in last 24h
 

@@ -17,6 +17,7 @@ import os
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     Column,
     DateTime,
     Float,
@@ -136,6 +137,43 @@ cache_miss_log = Table(
     Column("resolved_via", String(20), nullable=False),  # "live_api" or "cache"
 )
 
+
+# ── Universe table ───────────────────────────────────────────────────────────
+# Live index constituent list. Refreshed nightly from FMP.
+# company_name used by RSS news mapper for article → ticker matching.
+
+universe = Table(
+    "universe",
+    metadata,
+    Column("id", BigInteger, primary_key=True, autoincrement=True),
+    Column("ticker", String(20), nullable=False, unique=True),
+    Column("company_name", String(200), nullable=True),
+    Column("sector", String(100), nullable=True),
+    Column("in_sp500", Boolean, nullable=False, default=False),
+    Column("in_nasdaq100", Boolean, nullable=False, default=False),
+    Column("in_russell2000", Boolean, nullable=False, default=False),  # stubbed
+    Column("is_active", Boolean, nullable=False, default=True),
+    Column("last_updated", DateTime(timezone=True), nullable=False),
+)
+
+# ── Screening scores ──────────────────────────────────────────────────────────
+# Stage 1 screener output. One row per ticker per screening run.
+# top_50 flag marks tickers that survive into Stage 2 (full LLM pipeline).
+
+screening_scores = Table(
+    "screening_scores",
+    metadata,
+    Column("id", BigInteger, primary_key=True, autoincrement=True),
+    Column("ticker", String(20), nullable=False),
+    Column("screen_date", DateTime(timezone=True), nullable=False),
+    Column("liquidity_score", Float, nullable=True),    # avg daily volume score
+    Column("momentum_score", Float, nullable=True),     # 52-week return vs universe
+    Column("fundamental_score", Float, nullable=True),  # P/E, revenue growth score
+    Column("composite_score", Float, nullable=True),    # weighted combination
+    Column("passed_screen", Boolean, nullable=False, default=False),
+    Column("top_50", Boolean, nullable=False, default=False),
+    Column("screen_reason", String(200), nullable=True),  # why it passed/failed
+)
 
 # ── Engine factory ────────────────────────────────────────────────────────────
 

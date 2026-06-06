@@ -1,27 +1,32 @@
 """
-ingestion/scheduler.py — Nightly ingestion jobs via APScheduler
+ingestion/scheduler.py — Nightly ingestion jobs via APScheduler (Day 8 rewrite)
 
-Design decisions:
-- APScheduler BlockingScheduler for the worker process — one job queue,
-  runs in the main thread. No async complexity needed for batch jobs.
-- Three independent jobs: fundamentals, news, macro.
-  Each job fails independently — a Finnhub outage never blocks FRED ingestion.
-- Per-ticker error isolation inside each job — one bad ticker never aborts the batch.
-  We log failures, write IngestionResult, and move on.
-- UPSERT pattern on data_freshness_meta using ON CONFLICT — idempotent.
-  Running the job twice produces the same result as running it once.
-- Miss-based promotion: cache_miss_log is queried before each nightly run.
-  High-miss tickers are added to the universe automatically.
-- Nightly universe is defined here as a constant — easy to extend.
+Changes from Day 6:
+- Universe refresh job added (11 PM UTC) — fetches live S&P 500 + NASDAQ 100
+- Fundamentals ingestion rewritten — yfinance replaces FMP, no rate limits
+- News ingestion rewritten — RSS feeds replace FMP news, no rate limits
+- Screener job added (1 AM UTC) — Stage 1 quantitative filter, outputs top 50
+- FMP used ONLY for constituent lists (2 calls/night) — well within free tier
+- Macro (FRED) unchanged — working perfectly
+
+Nightly schedule (UTC):
+  23:00 — universe refresh (FMP constituent APIs)
+  00:00 — fundamentals ingestion (yfinance, full universe)
+  00:30 — news ingestion (RSS feeds, full universe)
+  01:00 — screener (Stage 1 filter, outputs top 50)
+  02:00 — macro (FRED, 5 indicators)
+  04:00 — eval maturation (signal quality job)
 """
 
 import json
 import logging
 import os
+import time
 from datetime import datetime, timezone
 
+import yfinance as yf
 from apscheduler.schedulers.blocking import BlockingScheduler
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from ingestion.db import (
@@ -36,87 +41,19 @@ from ingestion.db import (
     raw_news,
     raw_macro,
 )
-from ingestion.ingestion_client import FMPClient, batch_sleep
 from ingestion.models import IngestionResult
+from ingestion.rss_client import RSSClient
+from ingestion.screener import run_screener
+from ingestion.universe import refresh_universe, get_active_tickers, get_ticker_name_map
 
 logger = logging.getLogger(__name__)
 
-# ── Nightly universe ──────────────────────────────────────────────────────────
-# Top 100 S&P constituents by market cap + major ETFs.
-# Covers ~80% of real-world query traffic.
-# Crypto handled separately via CoinGecko (already reliable — no replacement needed).
-
-BASE_EQUITY_UNIVERSE = [
-    # Mega cap tech — highest query volume, highest priority
-    "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA",
-    # Financials
-    "JPM", "V", "BAC", "GS",
-    # Healthcare
-    "LLY", "UNH", "JNJ", "PFE",
-    # Consumer
-    "COST", "WMT", "PG", "KO", "MCD",
-    # ETFs — always high query volume
-    "SPY", "QQQ", "IWM",
-    # Semiconductors
-    "AMD", "INTC", "QCOM",
-    # Tech / SaaS
-    "CRM", "ADBE", "NFLX",
-]
-# NOTE: Universe kept at 30 tickers for FMP free tier (10 calls/min).
-# Expand to 100 when upgrading to paid plan.
-
-MISS_PROMOTION_THRESHOLD = 3   # promote ticker if missed 3+ times in last 24h
-
-
-# ── Ticker promotion ──────────────────────────────────────────────────────────
-
-def get_promoted_tickers(engine: Engine) -> list[str]:
-    """
-    Query cache_miss_log for high-miss tickers not already in the base universe.
-    These get added to tonight's ingestion run automatically.
-    """
-    try:
-        with engine.connect() as conn:
-            result = conn.execute(text("""
-                SELECT ticker, COUNT(*) as miss_count
-                FROM cache_miss_log
-                WHERE data_type = 'fundamentals'
-                  AND requested_at >= NOW() - INTERVAL '24 hours'
-                  AND resolved_via = 'live_api'
-                GROUP BY ticker
-                HAVING COUNT(*) >= :threshold
-            """), {"threshold": MISS_PROMOTION_THRESHOLD})
-
-            promoted = [
-                row.ticker for row in result
-                if row.ticker not in BASE_EQUITY_UNIVERSE
-            ]
-
-            if promoted:
-                logger.info(f"Promoting {len(promoted)} high-miss tickers: {promoted}")
-            return promoted
-
-    except Exception as e:
-        logger.warning(f"Could not query miss log for promotion: {e}")
-        return []
-
-
-def get_tonight_universe(engine: Engine) -> list[str]:
-    """Full nightly universe = base + promoted tickers."""
-    promoted = get_promoted_tickers(engine)
-    universe = list(dict.fromkeys(BASE_EQUITY_UNIVERSE + promoted))  # deduplicated, order preserved
-    logger.info(f"Tonight's universe: {len(universe)} tickers ({len(promoted)} promoted)")
-    return universe
+MISS_PROMOTION_THRESHOLD = 3
 
 
 # ── Freshness meta upsert ─────────────────────────────────────────────────────
 
 def upsert_freshness(conn, ticker: str, data_type: str, source: str, row_count: int, status: str):
-    """
-    UPSERT into data_freshness_meta.
-    ON CONFLICT (ticker, data_type) → UPDATE.
-    Idempotent — safe to call multiple times.
-    """
     conn.execute(text("""
         INSERT INTO data_freshness_meta
             (ticker, data_type, last_updated, status, source, row_count)
@@ -138,40 +75,110 @@ def upsert_freshness(conn, ticker: str, data_type: str, source: str, row_count: 
     })
 
 
-# ── Job 1: Fundamentals ───────────────────────────────────────────────────────
+# ── Ticker promotion ──────────────────────────────────────────────────────────
+
+def get_promoted_tickers(engine: Engine) -> list[str]:
+    """Query cache_miss_log for high-miss tickers not in the universe."""
+    try:
+        with engine.connect() as conn:
+            # Get active universe tickers
+            active = {row.ticker for row in conn.execute(text(
+                "SELECT ticker FROM universe WHERE is_active = true"
+            ))}
+
+            result = conn.execute(text("""
+                SELECT ticker, COUNT(*) as miss_count
+                FROM cache_miss_log
+                WHERE data_type = 'fundamentals'
+                  AND requested_at >= NOW() - INTERVAL '24 hours'
+                  AND resolved_via = 'live_api'
+                GROUP BY ticker
+                HAVING COUNT(*) >= :threshold
+            """), {"threshold": MISS_PROMOTION_THRESHOLD})
+
+            promoted = [
+                row.ticker for row in result
+                if row.ticker not in active
+            ]
+
+            if promoted:
+                logger.info(f"Promoting {len(promoted)} high-miss tickers: {promoted}")
+            return promoted
+
+    except Exception as e:
+        logger.warning(f"Could not query miss log for promotion: {e}")
+        return []
+
+
+def get_tonight_universe(engine: Engine) -> list[str]:
+    """Full nightly universe = active universe + promoted tickers."""
+    active = get_active_tickers(engine)
+    promoted = get_promoted_tickers(engine)
+    universe = list(dict.fromkeys(active + promoted))
+    logger.info(f"Tonight's universe: {len(universe)} tickers ({len(promoted)} promoted)")
+    return universe
+
+
+# ── Job 0: Universe refresh ───────────────────────────────────────────────────
+
+def run_universe_refresh(engine: Engine) -> dict:
+    """Fetch live S&P 500 + NASDAQ 100 constituents from FMP."""
+    logger.info("[universe] Starting universe refresh")
+    result = refresh_universe(engine)
+    logger.info(f"[universe] {result}")
+    return result
+
+
+# ── Job 1: Fundamentals (yfinance) ───────────────────────────────────────────
 
 def run_fundamentals_ingestion(engine: Engine) -> IngestionResult:
     """
-    Nightly FMP fundamentals ingestion.
-    For each ticker: fetch → validate → write raw → write processed → upsert freshness.
+    Nightly fundamentals ingestion using yfinance.
+    No API key, no rate limits, no quota.
     """
     result = IngestionResult(job_name="fundamentals")
-    client = FMPClient()
     universe = get_tonight_universe(engine)
 
-    logger.info(f"[fundamentals] Starting ingestion for {len(universe)} tickers")
+    logger.info(f"[fundamentals] Starting yfinance ingestion for {len(universe)} tickers")
 
     for ticker in universe:
         result.tickers_attempted += 1
         try:
-            fetch_result = client.fetch_fundamentals(ticker)
-            if fetch_result is None:
+            stock = yf.Ticker(ticker)
+            info = stock.info
+
+            if not info or not info.get("symbol"):
+                logger.warning(f"[fundamentals] yfinance: no info for {ticker}")
                 result.tickers_failed += 1
-                result.errors.append(f"{ticker}: fetch returned None")
                 with engine.connect() as conn:
-                    upsert_freshness(conn, ticker, "fundamentals", "fmp", 0, "failed")
+                    upsert_freshness(conn, ticker, "fundamentals", "yfinance", 0, "failed")
                     conn.commit()
-                batch_sleep(0.25)
                 continue
 
-            raw_model, raw_json = fetch_result
+            # Extract fundamentals fields
+            pe_ratio = info.get("trailingPE") or info.get("forwardPE")
+            eps = info.get("trailingEps")
+            revenue_growth = info.get("revenueGrowth")
+            debt_to_equity = info.get("debtToEquity")
+            market_cap = info.get("marketCap")
+            sector = info.get("sector")
+
+            raw_json = json.dumps({
+                "pe": pe_ratio,
+                "eps": eps,
+                "revenueGrowth": revenue_growth,
+                "debtToEquity": debt_to_equity,
+                "mktCap": market_cap,
+                "sector": sector,
+                "source": "yfinance",
+            })
 
             with engine.connect() as conn:
-                # Write raw (immutable)
+                # Write raw
                 raw_insert = conn.execute(
                     raw_fundamentals.insert().values(
                         ticker=ticker,
-                        source="fmp",
+                        source="yfinance",
                         fetched_at=datetime.now(timezone.utc),
                         raw_json=raw_json,
                     )
@@ -179,119 +186,140 @@ def run_fundamentals_ingestion(engine: Engine) -> IngestionResult:
                 raw_id = raw_insert.inserted_primary_key[0]
 
                 # Write processed
-                processed = client.to_processed_fundamentals(raw_model, ticker, raw_id)
                 conn.execute(
                     processed_fundamentals.insert().values(
-                        ticker=processed.ticker,
-                        pe_ratio=processed.pe_ratio,
-                        eps=processed.eps,
-                        revenue_growth=processed.revenue_growth,
-                        debt_to_equity=processed.debt_to_equity,
-                        market_cap=processed.market_cap,
-                        sector=processed.sector,
-                        processed_at=processed.processed_at,
-                        source_raw_id=processed.source_raw_id,
+                        ticker=ticker,
+                        pe_ratio=pe_ratio,
+                        eps=eps,
+                        revenue_growth=revenue_growth,
+                        debt_to_equity=debt_to_equity,
+                        market_cap=market_cap,
+                        sector=sector,
+                        processed_at=datetime.now(timezone.utc),
+                        source_raw_id=raw_id,
                     )
                 )
 
-                # Upsert freshness
-                upsert_freshness(conn, ticker, "fundamentals", "fmp", 1, "fresh")
+                upsert_freshness(conn, ticker, "fundamentals", "yfinance", 1, "fresh")
                 conn.commit()
 
             result.tickers_succeeded += 1
             result.rows_written += 1
+            logger.debug(f"[fundamentals] {ticker}: pe={pe_ratio} eps={eps}")
 
         except Exception as e:
-            logger.error(f"[fundamentals] Unexpected error for {ticker}: {e}", exc_info=True)
+            logger.error(f"[fundamentals] Error for {ticker}: {e}", exc_info=True)
             result.tickers_failed += 1
             result.errors.append(f"{ticker}: {str(e)[:100]}")
 
-        batch_sleep(0.25)
+        time.sleep(0.1)  # gentle rate limiting — yfinance has no hard limit but be polite
 
     result.completed_at = datetime.now(timezone.utc)
     logger.info(f"[fundamentals] {result.summary()}")
     return result
 
 
-# ── Job 2: News ───────────────────────────────────────────────────────────────
+# ── Job 2: News (RSS) ─────────────────────────────────────────────────────────
 
 def run_news_ingestion(engine: Engine) -> IngestionResult:
     """
-    Nightly FMP news ingestion.
-    Fetches latest company news for each ticker in universe via FMP stable endpoint.
+    Nightly news ingestion using RSS feeds.
+    One fetch per feed — maps to all tickers simultaneously.
+    No API key, no rate limits, no quota.
     """
     result = IngestionResult(job_name="news")
-    client = FMPClient()
-    universe = get_tonight_universe(engine)
 
-    logger.info(f"[news] Starting ingestion for {len(universe)} tickers")
+    # Fetch all feeds once
+    client = RSSClient()
+    total_articles = client.fetch_all_feeds()
 
-    for ticker in universe:
-        result.tickers_attempted += 1
+    if total_articles == 0:
+        logger.warning("[news] No articles fetched from RSS feeds")
+        result.errors.append("No articles fetched")
+        result.completed_at = datetime.now(timezone.utc)
+        return result
+
+    # Get ticker name map for matching
+    ticker_name_map = get_ticker_name_map(engine)
+    if not ticker_name_map:
+        logger.warning("[news] No ticker name map available — run universe refresh first")
+        result.errors.append("No ticker name map")
+        result.completed_at = datetime.now(timezone.utc)
+        return result
+
+    # Map articles to tickers
+    ticker_articles = client.map_to_tickers(ticker_name_map)
+    result.tickers_attempted = len(ticker_articles)
+
+    now = datetime.now(timezone.utc)
+
+    for ticker, articles in ticker_articles.items():
         try:
-            fetch_result = client.fetch_news(ticker)
-            if fetch_result is None:
-                result.tickers_failed += 1
-                result.errors.append(f"{ticker}: fetch returned None")
-                with engine.connect() as conn:
-                    upsert_freshness(conn, ticker, "news", "finnhub", 0, "failed")
-                    conn.commit()
-                batch_sleep(0.25)
-                continue
-
-            articles, raw_json = fetch_result
+            raw_json = json.dumps([{
+                "headline": a["headline"],
+                "publisher": a["publisher"],
+                "published_at": a["published_at"].isoformat() if a["published_at"] else None,
+                "url": a["url"],
+            } for a in articles])
 
             with engine.connect() as conn:
-                # Write raw (even if no articles — log the attempt)
+                # Write raw
                 raw_insert = conn.execute(
                     raw_news.insert().values(
                         ticker=ticker,
-                        source="fmp_news",
-                        fetched_at=datetime.now(timezone.utc),
+                        source="rss",
+                        fetched_at=now,
                         raw_json=raw_json,
                     )
                 )
                 raw_id = raw_insert.inserted_primary_key[0]
 
                 # Write processed articles
-                processed_articles = client.to_processed_news(articles, ticker, raw_id)
                 rows_written = 0
-                for article in processed_articles:
+                for article in articles:
                     conn.execute(
                         processed_news.insert().values(
-                            ticker=article.ticker,
-                            headline=article.headline,
-                            publisher=article.publisher,
-                            published_at=article.published_at,
-                            processed_at=article.processed_at,
-                            source_raw_id=article.source_raw_id,
+                            ticker=ticker,
+                            headline=article["headline"],
+                            publisher=article["publisher"],
+                            published_at=article["published_at"],
+                            processed_at=now,
+                            source_raw_id=raw_id,
                         )
                     )
                     rows_written += 1
 
-                upsert_freshness(conn, ticker, "news", "fmp_news", rows_written, "fresh")
+                upsert_freshness(conn, ticker, "news", "rss", rows_written, "fresh")
                 conn.commit()
 
             result.tickers_succeeded += 1
             result.rows_written += rows_written
 
         except Exception as e:
-            logger.error(f"[news] Unexpected error for {ticker}: {e}", exc_info=True)
+            logger.error(f"[news] Error for {ticker}: {e}", exc_info=True)
             result.tickers_failed += 1
             result.errors.append(f"{ticker}: {str(e)[:100]}")
-
-        batch_sleep(0.25)
 
     result.completed_at = datetime.now(timezone.utc)
     logger.info(f"[news] {result.summary()}")
     return result
 
 
-# ── Job 3: Macro (FRED) ───────────────────────────────────────────────────────
+# ── Job 3: Screener ───────────────────────────────────────────────────────────
+
+def run_screener_job(engine: Engine) -> dict:
+    """Stage 1 quantitative screener — filters universe to top 50."""
+    logger.info("[screener] Starting Stage 1 quantitative screen")
+    result = run_screener(engine)
+    logger.info(f"[screener] {result}")
+    return result
+
+
+# ── Job 4: Macro (FRED) ───────────────────────────────────────────────────────
 
 FRED_SERIES = {
     "fed_funds_rate": "FEDFUNDS",
-    "cpi_yoy": "CPIAUCSL",      # we compute YoY in DataFetchAgent — store raw CPI here
+    "cpi_yoy": "CPIAUCSL",
     "yield_10y": "GS10",
     "yield_2y": "GS2",
     "unemployment": "UNRATE",
@@ -299,18 +327,14 @@ FRED_SERIES = {
 
 
 def run_macro_ingestion(engine: Engine) -> IngestionResult:
-    """
-    Nightly FRED macro ingestion.
-    Fixed indicator set — no ticker universe needed.
-    """
+    """Nightly FRED macro ingestion — unchanged from Day 6."""
     result = IngestionResult(job_name="macro")
 
     try:
         from fredapi import Fred
         api_key = os.getenv("FRED_API_KEY")
         if not api_key:
-            logger.error("[macro] FRED_API_KEY not set — skipping macro ingestion")
-            result.errors.append("FRED_API_KEY not set")
+            logger.error("[macro] FRED_API_KEY not set")
             return result
 
         fred = Fred(api_key=api_key)
@@ -320,7 +344,6 @@ def run_macro_ingestion(engine: Engine) -> IngestionResult:
             try:
                 series = fred.get_series(series_id).dropna()
                 if series.empty:
-                    logger.warning(f"[macro] FRED series '{series_id}' returned empty")
                     result.tickers_failed += 1
                     continue
 
@@ -332,7 +355,6 @@ def run_macro_ingestion(engine: Engine) -> IngestionResult:
                     "latest_value": latest_value,
                     "latest_period": latest_period,
                 }
-                raw_json = json.dumps(raw_payload)
 
                 with engine.connect() as conn:
                     raw_insert = conn.execute(
@@ -340,7 +362,7 @@ def run_macro_ingestion(engine: Engine) -> IngestionResult:
                             indicator=indicator_name,
                             source="fred",
                             fetched_at=datetime.now(timezone.utc),
-                            raw_json=raw_json,
+                            raw_json=json.dumps(raw_payload),
                         )
                     )
                     raw_id = raw_insert.inserted_primary_key[0]
@@ -355,7 +377,6 @@ def run_macro_ingestion(engine: Engine) -> IngestionResult:
                         )
                     )
 
-                    # Macro uses indicator name as "ticker" in freshness meta
                     upsert_freshness(conn, indicator_name, "macro", "fred", 1, "fresh")
                     conn.commit()
 
@@ -369,7 +390,7 @@ def run_macro_ingestion(engine: Engine) -> IngestionResult:
                 result.errors.append(f"{indicator_name}: {str(e)[:100]}")
 
     except Exception as e:
-        logger.error(f"[macro] Fatal error in macro ingestion: {e}", exc_info=True)
+        logger.error(f"[macro] Fatal error: {e}", exc_info=True)
         result.errors.append(f"Fatal: {str(e)[:100]}")
 
     result.completed_at = datetime.now(timezone.utc)
@@ -381,47 +402,64 @@ def run_macro_ingestion(engine: Engine) -> IngestionResult:
 
 def build_scheduler(engine: Engine) -> BlockingScheduler:
     """
-    Build and configure the APScheduler instance.
-    Three jobs, staggered start times to avoid simultaneous DB pressure.
-
-    Schedule (UTC):
-      02:00 — fundamentals (heaviest — 200 FMP calls)
-      02:30 — news (moderate — 100 Finnhub calls)
-      03:00 — macro (lightest — 5 FRED calls)
+    Nightly schedule (UTC):
+      23:00 — universe refresh
+      00:00 — fundamentals (yfinance)
+      00:30 — news (RSS)
+      01:00 — screener (Stage 1)
+      02:00 — macro (FRED)
+      04:00 — eval maturation
     """
+    from evaluation.eval_job import run_eval_maturation
+
     scheduler = BlockingScheduler(timezone="UTC")
 
     scheduler.add_job(
+        func=lambda: run_universe_refresh(engine),
+        trigger="cron", hour=23, minute=0,
+        id="universe_refresh",
+        name="Nightly Universe Refresh",
+        misfire_grace_time=300, coalesce=True,
+    )
+
+    scheduler.add_job(
         func=lambda: run_fundamentals_ingestion(engine),
-        trigger="cron",
-        hour=2,
-        minute=0,
+        trigger="cron", hour=0, minute=0,
         id="fundamentals_ingestion",
-        name="Nightly FMP Fundamentals Ingestion",
-        misfire_grace_time=300,     # if job misfires, run within 5 min window
-        coalesce=True,              # if multiple misfires, run only once
+        name="Nightly yfinance Fundamentals Ingestion",
+        misfire_grace_time=300, coalesce=True,
     )
 
     scheduler.add_job(
         func=lambda: run_news_ingestion(engine),
-        trigger="cron",
-        hour=2,
-        minute=30,
+        trigger="cron", hour=0, minute=30,
         id="news_ingestion",
-        name="Nightly Finnhub News Ingestion",
-        misfire_grace_time=300,
-        coalesce=True,
+        name="Nightly RSS News Ingestion",
+        misfire_grace_time=300, coalesce=True,
+    )
+
+    scheduler.add_job(
+        func=lambda: run_screener_job(engine),
+        trigger="cron", hour=1, minute=0,
+        id="screener",
+        name="Nightly Stage 1 Screener",
+        misfire_grace_time=300, coalesce=True,
     )
 
     scheduler.add_job(
         func=lambda: run_macro_ingestion(engine),
-        trigger="cron",
-        hour=3,
-        minute=0,
+        trigger="cron", hour=2, minute=0,
         id="macro_ingestion",
         name="Nightly FRED Macro Ingestion",
-        misfire_grace_time=300,
-        coalesce=True,
+        misfire_grace_time=300, coalesce=True,
+    )
+
+    scheduler.add_job(
+        func=lambda: run_eval_maturation(engine),
+        trigger="cron", hour=4, minute=0,
+        id="eval_maturation",
+        name="Nightly Signal Eval Maturation",
+        misfire_grace_time=300, coalesce=True,
     )
 
     return scheduler

@@ -41,6 +41,8 @@ logger = logging.getLogger("worker")
 # ── Imports after logging ─────────────────────────────────────────────────────
 
 from ingestion.db import get_engine, init_db
+from evaluation.db_eval import init_eval_db
+from evaluation.eval_job import run_eval_maturation
 from ingestion.scheduler import (
     build_scheduler,
     run_fundamentals_ingestion,
@@ -63,7 +65,8 @@ def main():
     logger.info("Connecting to Postgres...")
     engine = get_engine()
     init_db(engine)
-    logger.info("Database ready")
+    init_eval_db(engine)
+    logger.info("Database ready (ingestion + eval tables)")
 
     # ── Warm-up ingestion ─────────────────────────────────────────────────────
     # On first deploy, Postgres is empty. Run an immediate ingestion pass

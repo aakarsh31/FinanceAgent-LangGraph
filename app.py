@@ -11,6 +11,8 @@ from src.graphs.graph_builder import GraphBuilder
 from src.exceptions import FinanceAgentError
 from langgraph.checkpoint.sqlite import SqliteSaver
 from ingestion.db import get_engine, init_db
+from evaluation.db_eval import init_eval_db
+from evaluation.signal_store import record_signal
 
 import os
 from dotenv import load_dotenv
@@ -32,6 +34,7 @@ os.environ["LANGCHAIN_PROJECT"] = os.getenv("LANGCHAIN_PROJECT", "FinanceAgent-M
 VALID_TIMEFRAMES = ["1mo", "3mo", "6mo", "1y", "2y"]
 
 graph = None
+pg_engine = None
 
 
 # ── Checkpoint helpers ────────────────────────────────────────────────────────
@@ -84,18 +87,18 @@ def cleanup_old_checkpoints(db_path="checkpoints.db", days=7):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global graph
+    global graph, pg_engine
     init_meta_table()
     cleanup_old_checkpoints()
 
     # Initialize Postgres — non-fatal if DATABASE_URL is not set
     # (allows local dev without Postgres; agents fall back to live API)
-    pg_engine = None
     if os.getenv("DATABASE_URL"):
         try:
             pg_engine = get_engine()
             init_db(pg_engine)
-            logger.info("Postgres engine initialized")
+            init_eval_db(pg_engine)
+            logger.info("Postgres engine initialized (ingestion + eval tables)")
         except Exception as e:
             logger.warning(f"Postgres initialization failed (non-fatal): {e} — agents will use live API fallback")
     else:
@@ -217,13 +220,100 @@ async def approve(thread_id: str):
 
     logger.info(f"Supervisor report generated for thread_id={thread_id}")
 
+    ticker = state["ticker"]
+    asset_class = state.get("asset_class", "equity")
+    supervisor_report = state.get("supervisor_report", {})
+
+    # Record signal for evaluation — non-fatal
+    if pg_engine and supervisor_report:
+        try:
+            run_id = record_signal(
+                engine=pg_engine,
+                ticker=ticker,
+                asset_class=asset_class,
+                supervisor_report=supervisor_report,
+                data_provenance=state.get("data_provenance", {}),
+            )
+            if run_id:
+                logger.info(f"Signal recorded — run_id={run_id}")
+        except Exception as e:
+            logger.error(f"Signal recording failed for {ticker} (non-fatal): {e}")
+
     return {
         "status": "complete",
         "thread_id": thread_id,
-        "ticker": state["ticker"],
-        "asset_class": state.get("asset_class"),
-        "supervisor_report": state["supervisor_report"],
+        "ticker": ticker,
+        "asset_class": asset_class,
+        "supervisor_report": supervisor_report,
     }
+
+
+# ── /evaluate ─────────────────────────────────────────────────────────────────
+
+@app.get("/evaluate")
+async def evaluate():
+    """
+    Returns the latest hit rate metrics from eval_runs.
+    Also triggers maturation of any pending signals on-demand.
+    """
+    from evaluation.eval_job import run_eval_maturation
+    from sqlalchemy import text as sql_text
+
+    if not pg_engine:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    # Run maturation for any newly eligible signals
+    summary = run_eval_maturation(pg_engine)
+
+    # Fetch latest eval_run
+    try:
+        with pg_engine.connect() as conn:
+            latest = conn.execute(sql_text("""
+                SELECT * FROM eval_runs
+                ORDER BY created_at DESC
+                LIMIT 1
+            """)).fetchone()
+
+            total_pending = conn.execute(sql_text("""
+                SELECT COUNT(*) FROM pipeline_signals WHERE eval_status = 'pending'
+            """)).scalar()
+
+            total_evaluated = conn.execute(sql_text("""
+                SELECT COUNT(*) FROM pipeline_signals WHERE eval_status = 'evaluated'
+            """)).scalar()
+
+        if not latest:
+            return {
+                "status": "no_data",
+                "message": "No evaluated signals yet. Signals mature after 30 days.",
+                "pending_signals": total_pending,
+                "maturation_summary": summary,
+            }
+
+        return {
+            "status": "ok",
+            "model_version": latest.model_version,
+            "signals_evaluated": latest.signals_evaluated,
+            "pending_signals": total_pending,
+            "total_evaluated": total_evaluated,
+            "hit_rate": {
+                "overall": round(latest.hit_rate_overall * 100, 1) if latest.hit_rate_overall else None,
+                "buy": round(latest.hit_rate_buy * 100, 1) if latest.hit_rate_buy else None,
+                "sell": round(latest.hit_rate_sell * 100, 1) if latest.hit_rate_sell else None,
+                "high_confidence": round(latest.hit_rate_high_confidence * 100, 1) if latest.hit_rate_high_confidence else None,
+                "medium_confidence": round(latest.hit_rate_medium_confidence * 100, 1) if latest.hit_rate_medium_confidence else None,
+            },
+            "returns": {
+                "avg_return_buy_pct": round(latest.avg_return_buy * 100, 2) if latest.avg_return_buy else None,
+                "avg_return_sell_pct": round(latest.avg_return_sell * 100, 2) if latest.avg_return_sell else None,
+                "avg_alpha_buy_pct": round(latest.avg_alpha_buy * 100, 2) if latest.avg_alpha_buy else None,
+            },
+            "last_eval": latest.created_at.isoformat() if latest.created_at else None,
+            "maturation_summary": summary,
+        }
+    except Exception as e:
+        logger.error(f"/evaluate failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Eval query failed")
 
 
 if __name__ == "__main__":

@@ -28,6 +28,9 @@
       --pending:  rgba(251,191,36,0.12);
       --mono:     'IBM Plex Mono', monospace;
       --display:  'Bebas Neue', cursive;
+      --prism-start: #818cf8;
+      --prism-mid:   #93c5fd;
+      --prism-end:   #fbcfe8;
     }
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -41,14 +44,56 @@
       overflow-x: hidden;
     }
 
+    /* ── Prismatic gradient animation ─────────────────────────────────────── */
+    @keyframes prism-shift {
+      0%   { background-position: 0% 50%; }
+      50%  { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
+    }
+
+    .prism-text {
+      background: linear-gradient(
+        90deg,
+        #818cf8 0%,
+        #60a5fa 18%,
+        #93c5fd 30%,
+        #fbcfe8 42%,
+        #e8e6f0 55%,
+        #e8e6f0 100%
+      );
+      background-size: 200% auto;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      animation: prism-shift 6s ease infinite;
+    }
+
+    .prism-label {
+      background: linear-gradient(
+        90deg,
+        #818cf8 0%,
+        #60a5fa 30%,
+        #93c5fd 55%,
+        #fbcfe8 75%,
+        #e8e6f0 100%
+      );
+      background-size: 200% auto;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      animation: prism-shift 8s ease infinite;
+    }
+
+    /* ── Topbar ───────────────────────────────────────────────────────────── */
     .topbar {
-      background: var(--amber);
-      color: var(--black);
+      background: var(--surface2);
+      border-bottom: 1px solid var(--border);
+      color: var(--white);
       display: flex;
       align-items: center;
       justify-content: space-between;
       padding: 0 20px;
-      height: 30px;
+      height: 36px;
       font-size: 10px;
       font-weight: 600;
       letter-spacing: 0.12em;
@@ -56,14 +101,19 @@
       top: 0;
       z-index: 200;
     }
-    .logo { font-family: var(--display); font-size: 16px; letter-spacing: 0.08em; }
-    .topbar-right { display: flex; align-items: center; gap: 20px; opacity: 0.85; }
-    #clock { font-variant-numeric: tabular-nums; }
+    .logo {
+      font-family: var(--display);
+      font-size: 18px;
+      letter-spacing: 0.08em;
+    }
+    .topbar-right { display: flex; align-items: center; gap: 20px; color: var(--muted); }
+    #clock { font-variant-numeric: tabular-nums; color: var(--amber); }
 
+    /* ── Shell ────────────────────────────────────────────────────────────── */
     .shell {
       display: grid;
       grid-template-columns: 260px 1fr;
-      min-height: calc(100vh - 30px);
+      min-height: calc(100vh - 36px);
     }
 
     .sidebar {
@@ -82,7 +132,6 @@
       font-size: 9px;
       letter-spacing: 0.2em;
       text-transform: uppercase;
-      color: var(--amber);
       margin-bottom: 14px;
       display: flex;
       align-items: center;
@@ -104,19 +153,24 @@
       display: flex;
       align-items: center;
       background: var(--surface2);
-      border: 1px solid var(--border);
-      transition: border-color 0.2s;
+      border: 1px solid rgba(129,140,248,0.3);
+      transition: border-color 0.2s, box-shadow 0.2s;
+      margin-top: 2px;
     }
-    .ticker-wrap:focus-within { border-color: var(--amber); }
+    .ticker-wrap:focus-within {
+      border-color: #818cf8;
+      box-shadow: 0 0 0 2px rgba(129,140,248,0.12), 0 0 12px rgba(129,140,248,0.08);
+    }
     .ticker-prefix {
-      padding: 0 10px;
-      color: var(--amber);
-      font-size: 12px;
-      font-weight: 600;
-      border-right: 1px solid var(--border);
-      height: 36px;
+      padding: 0 12px;
+      color: #818cf8;
+      font-size: 14px;
+      font-weight: 700;
+      border-right: 1px solid rgba(129,140,248,0.2);
+      height: 44px;
       display: flex;
       align-items: center;
+      letter-spacing: 0.05em;
     }
 
     input[type="text"] {
@@ -124,16 +178,16 @@
       border: none;
       color: var(--white);
       font-family: var(--mono);
-      font-size: 14px;
-      font-weight: 500;
-      letter-spacing: 0.08em;
-      padding: 0 10px;
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      padding: 0 12px;
       width: 100%;
-      height: 36px;
+      height: 44px;
       outline: none;
       text-transform: uppercase;
     }
-    input::placeholder { color: var(--dim); font-size: 11px; }
+    input::placeholder { color: var(--dim); font-size: 11px; font-weight: 400; letter-spacing: 0.1em; }
 
     .asset-pill {
       display: inline-flex;
@@ -220,6 +274,7 @@
       color: var(--muted);
     }
 
+    /* ── Main area ────────────────────────────────────────────────────────── */
     .main {
       background: var(--black);
       display: flex;
@@ -227,6 +282,7 @@
       overflow: hidden;
     }
 
+    /* ── Typewriter command bar ───────────────────────────────────────────── */
     .cmd-bar {
       background: var(--surface2);
       border-bottom: 1px solid var(--border);
@@ -237,8 +293,20 @@
       display: flex;
       align-items: center;
       gap: 8px;
+      min-height: 32px;
     }
     .cmd-bar::before { content: '›'; color: var(--amber); font-size: 14px; }
+    #cmdBarText { display: inline; }
+    .cursor-blink {
+      display: inline-block;
+      width: 7px;
+      height: 11px;
+      background: var(--amber);
+      margin-left: 2px;
+      vertical-align: middle;
+      animation: blink 1s step-end infinite;
+    }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
 
     .canvas { padding: 24px; flex: 1; }
 
@@ -285,10 +353,10 @@
       align-items: center;
       gap: 10px;
     }
-    .graph-title span { color: var(--amber); }
+    .graph-title span { }
     .graph-title::after { content: ''; flex: 1; height: 1px; background: var(--border); }
 
-    /* pipeline graph — centred column layout */
+    /* ── Pipeline graph ───────────────────────────────────────────────────── */
     .pipeline {
       display: flex;
       flex-direction: column;
@@ -308,9 +376,16 @@
       height: 20px;
       background: var(--border);
       margin: 0 auto;
+      transition: background 0.4s;
     }
     .pipe-connector.active { background: var(--amber); }
     .pipe-connector.done   { background: var(--green); }
+
+    /* ── Scanline sweep animation on nodes ────────────────────────────────── */
+    @keyframes scanline {
+      0%   { left: -100%; opacity: 0.6; }
+      100% { left: 120%;  opacity: 0; }
+    }
 
     .agent-node {
       background: var(--surface);
@@ -319,12 +394,26 @@
       min-width: 140px;
       max-width: 180px;
       position: relative;
-      transition: all 0.3s;
+      overflow: hidden;
+      transition: border-color 0.3s, background 0.3s;
     }
     .agent-node.wide { min-width: 220px; max-width: 280px; }
 
     .agent-node.pending  { border-color: var(--border); }
-    .agent-node.running  { border-color: var(--amber); background: var(--amber-gl); animation: pulse-amber 1.2s ease-in-out infinite; }
+    .agent-node.running  {
+      border-color: var(--amber);
+      background: var(--amber-gl);
+      animation: pulse-amber 1.2s ease-in-out infinite;
+    }
+    .agent-node.running::after {
+      content: '';
+      position: absolute;
+      top: 0; left: -100%;
+      width: 60%;
+      height: 100%;
+      background: linear-gradient(90deg, transparent, rgba(245,158,11,0.35), transparent);
+      animation: scanline 2.2s ease-in-out infinite;
+    }
     .agent-node.done     { border-color: var(--green); background: var(--green-gl); }
     .agent-node.awaiting { border-color: var(--yellow); background: var(--pending); animation: pulse-yellow 1.5s ease-in-out infinite; }
     .agent-node.skipped  { border-color: var(--border); opacity: 0.35; }
@@ -385,7 +474,7 @@
     .agent-node.done .node-output { display: block; }
     .node-output-val { color: var(--green); font-weight: 500; }
 
-    /* fan-out — horizontal bar + drops */
+    /* ── Fan-out ──────────────────────────────────────────────────────────── */
     .fan-wrap {
       display: flex;
       flex-direction: column;
@@ -397,6 +486,7 @@
       height: 2px;
       background: var(--border);
       width: 70%;
+      transition: background 0.4s;
     }
     .fan-bar.done   { background: var(--green); }
     .fan-bar.active { background: var(--amber); }
@@ -418,6 +508,7 @@
       width: 2px;
       height: 16px;
       background: var(--border);
+      transition: background 0.4s;
     }
     .fan-drop.done   { background: var(--green); }
     .fan-drop.active { background: var(--amber); }
@@ -426,6 +517,7 @@
       height: 2px;
       background: var(--border);
       width: 70%;
+      transition: background 0.4s;
     }
     .fan-merge.done   { background: var(--green); }
     .fan-merge.active { background: var(--amber); }
@@ -435,10 +527,12 @@
       height: 16px;
       background: var(--border);
       margin: 0 auto;
+      transition: background 0.4s;
     }
     .fan-merge-drop.done   { background: var(--green); }
     .fan-merge-drop.active { background: var(--amber); }
 
+    /* ── Pending banner ───────────────────────────────────────────────────── */
     .pending-banner {
       background: var(--pending);
       border: 1px solid var(--yellow);
@@ -450,9 +544,42 @@
     .pb-title { font-size: 10px; letter-spacing: 0.15em; font-weight: 600; color: var(--yellow); margin-bottom: 4px; }
     .pb-sub { font-size: 9px; color: var(--muted); letter-spacing: 0.06em; line-height: 1.5; }
 
-    /* report */
+    /* ── Signal recorded badge ────────────────────────────────────────────── */
+    .signal-badge {
+      display: none;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      background: rgba(16,185,129,0.06);
+      border: 1px solid rgba(16,185,129,0.3);
+      font-size: 9px;
+      letter-spacing: 0.12em;
+      color: var(--green);
+      margin-top: 8px;
+      animation: fade-in-up 0.4s ease forwards;
+    }
+    .signal-badge.visible { display: flex; }
+    .signal-badge-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--green); }
+
+    /* ── Report ───────────────────────────────────────────────────────────── */
     .report-view { display: none; margin-top: 24px; }
     .report-view.visible { display: block; }
+
+    /* Staggered section reveal */
+    @keyframes fade-in-up {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .report-section {
+      opacity: 0;
+      animation: fade-in-up 0.5s ease forwards;
+    }
+    .report-section:nth-child(1) { animation-delay: 0.05s; }
+    .report-section:nth-child(2) { animation-delay: 0.15s; }
+    .report-section:nth-child(3) { animation-delay: 0.25s; }
+    .report-section:nth-child(4) { animation-delay: 0.35s; }
+    .report-section:nth-child(5) { animation-delay: 0.45s; }
+    .report-section:nth-child(6) { animation-delay: 0.55s; }
 
     .report-header {
       display: flex;
@@ -462,7 +589,12 @@
       padding-bottom: 16px;
       margin-bottom: 20px;
     }
-    .report-ticker { font-family: var(--display); font-size: 52px; line-height: 1; letter-spacing: 0.04em; color: var(--white); }
+    .report-ticker {
+      font-family: var(--display);
+      font-size: 52px;
+      line-height: 1;
+      letter-spacing: 0.04em;
+    }
     .report-meta { font-size: 9px; color: var(--muted); letter-spacing: 0.12em; margin-top: 6px; }
 
     .rec-block { text-align: right; }
@@ -477,12 +609,12 @@
 
     .panel { background: var(--surface); border: 1px solid var(--border); }
     .panel-head {
-      padding: 8px 12px;
+      padding: 10px 14px;
       border-bottom: 1px solid var(--border);
-      font-size: 9px;
-      letter-spacing: 0.18em;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.14em;
       text-transform: uppercase;
-      color: var(--amber);
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -522,6 +654,9 @@
     .bull-list li::before { color: var(--green); }
     .bear-list li::before { color: var(--red); }
 
+    /* ── Number counter animation ─────────────────────────────────────────── */
+    .count-val { display: inline-block; font-variant-numeric: tabular-nums; }
+
     .metrics-table { width: 100%; border-collapse: collapse; font-size: 11px; }
     .metrics-table tr { border-bottom: 1px solid var(--border); }
     .metrics-table tr:last-child { border-bottom: none; }
@@ -540,6 +675,51 @@
       margin-bottom: 10px;
     }
 
+    /* ── Crypto signals panel ─────────────────────────────────────────────── */
+    .crypto-signals-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+    .cs-item {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    .cs-label {
+      font-size: 8px;
+      letter-spacing: 0.15em;
+      color: var(--dim);
+      text-transform: uppercase;
+    }
+    .cs-value {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--white);
+    }
+    .cs-value.extreme-fear { color: var(--red); }
+    .cs-value.fear         { color: #f97316; }
+    .cs-value.neutral      { color: var(--muted); }
+    .cs-value.greed        { color: var(--green); }
+    .cs-value.extreme-greed{ color: #34d399; }
+
+    /* ── Data provenance panel ────────────────────────────────────────────── */
+    .provenance-row { display: flex; flex-direction: column; gap: 4px; }
+    .prov-item {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 10px;
+      letter-spacing: 0.06em;
+      padding: 7px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .prov-item:last-child { border-bottom: none; }
+    .prov-key { color: var(--white); font-weight: 500; min-width: 90px; text-transform: uppercase; font-size: 9px; letter-spacing: 0.12em; }
+    .prov-val { color: var(--muted); font-size: 10px; text-align: right; line-height: 1.5; }
+
     .analyst-text { font-size: 12px; line-height: 1.7; letter-spacing: 0.02em; color: var(--muted); }
     .analyst-text.agreed    { color: var(--green); }
     .analyst-text.disagreed { color: var(--yellow); }
@@ -556,19 +736,19 @@
 
 <div class="topbar">
   <div style="display:flex;align-items:center;gap:16px;">
-    <div class="logo">FINANCEAGENT</div>
-    <span style="opacity:0.5;font-size:9px;letter-spacing:0.15em;">MULTI-AGENT INVESTMENT RESEARCH DESK</span>
+    <div class="logo prism-text">FINANCEAGENT</div>
+    <span style="opacity:0.4;font-size:9px;letter-spacing:0.15em;">MULTI-AGENT INVESTMENT RESEARCH DESK</span>
   </div>
   <div class="topbar-right">
     <span id="clock"></span>
-    <span>NEW YORK</span>
+    <span style="opacity:0.5;">NEW YORK</span>
   </div>
 </div>
 
 <div class="shell">
   <aside class="sidebar">
     <div class="sidebar-block">
-      <div class="block-label">Instrument</div>
+      <div class="block-label prism-label">Instrument</div>
       <div class="field">
         <label>Ticker Symbol</label>
         <div class="ticker-wrap">
@@ -596,10 +776,14 @@
       <button class="approve-btn" id="approveBtn" onclick="approve()">
         <span class="btn-label">✓ APPROVE & GENERATE MEMO</span>
       </button>
+      <div class="signal-badge" id="signalBadge">
+        <div class="signal-badge-dot"></div>
+        <span>SIGNAL RECORDED — EVAL TRACKING ACTIVE</span>
+      </div>
     </div>
 
     <div class="sidebar-block">
-      <div class="block-label">Stack</div>
+      <div class="block-label prism-label">Stack</div>
       <div class="chip-row">
         <div class="chip">LANGGRAPH</div>
         <div class="chip">GPT-4.1</div>
@@ -611,28 +795,32 @@
         <div class="chip">LANGSMITH</div>
         <div class="chip">HITL</div>
         <div class="chip">FASTAPI</div>
+        <div class="chip">POSTGRES</div>
+        <div class="chip">RSS FEEDS</div>
       </div>
     </div>
 
     <div class="sidebar-block" style="flex:1;">
-      <div class="block-label">Firm</div>
+      <div class="block-label prism-label">Firm</div>
       <div style="font-size:10px;line-height:2;letter-spacing:0.05em;">
         <div style="color:var(--muted);">Macro Regime Analyst</div>
-        <div style="color:var(--muted);">Fundamentals Analyst</div>
+        <div style="color:var(--muted);">Fundamentals Agent</div>
         <div style="color:var(--muted);">Bull Analyst</div>
         <div style="color:var(--muted);">Bear Analyst</div>
         <div style="color:var(--muted);">Valuation Analyst</div>
-        <div style="color:var(--muted);">Risk Manager</div>
-        <div style="color:var(--muted);">Sentiment Analyst</div>
+        <div style="color:var(--muted);">Risk Agent</div>
+        <div style="color:var(--muted);">Sentiment Agent</div>
         <div style="color:var(--muted);">On-Chain Analyst</div>
-        <div style="margin-top:8px;color:var(--amber);">Portfolio Manager</div>
-        <div style="color:var(--yellow);">Compliance Officer</div>
+        <div style="margin-top:8px;color:var(--amber);">Supervisor Agent</div>
+        <div style="color:var(--yellow);">— HITL Gate —</div>
       </div>
     </div>
   </aside>
 
   <main class="main">
-    <div class="cmd-bar" id="cmdBar">AWAITING INPUT — ENTER TICKER AND PRESS RUN</div>
+    <div class="cmd-bar">
+      <span id="cmdBarText">AWAITING INPUT — ENTER TICKER AND PRESS RUN</span><span class="cursor-blink"></span>
+    </div>
 
     <div class="canvas">
       <div class="error-bar" id="errorBar"></div>
@@ -643,7 +831,7 @@
       </div>
 
       <div class="graph-view" id="graphView">
-        <div class="graph-title">PIPELINE — <span id="graphTicker">—</span></div>
+        <div class="graph-title">PIPELINE — <span id="graphTicker" class="prism-label">—</span></div>
 
         <div class="pending-banner" id="pendingBanner">
           <div class="pb-title">⏸ AWAITING PORTFOLIO MANAGER REVIEW</div>
@@ -757,7 +945,7 @@
                 <div class="fan-col">
                   <div class="fan-drop" id="fd-onchain"></div>
                   <div class="agent-node" id="node-onchain">
-                    <div class="node-header"><div class="node-role">Crypto · CoinGecko</div><div class="node-status-dot"></div></div>
+                    <div class="node-header"><div class="node-role">Crypto · On-Chain</div><div class="node-status-dot"></div></div>
                     <div class="node-name">ON-CHAIN ANALYST</div>
                     <div class="node-output" id="out-onchain"></div>
                   </div>
@@ -802,43 +990,53 @@
 
       <!-- Report -->
       <div class="report-view" id="reportView">
-        <div class="report-header">
-          <div>
-            <div class="report-ticker" id="repTicker"></div>
-            <div class="report-meta" id="repMeta"></div>
-          </div>
-          <div class="rec-block">
-            <div class="rec-label">RECOMMENDATION</div>
-            <div class="rec-val" id="repRec"></div>
-            <div class="conf-tag" id="repConf"></div>
+
+        <div class="report-section">
+          <div class="report-header">
+            <div>
+              <div class="report-ticker prism-text" id="repTicker"></div>
+              <div class="report-meta" id="repMeta"></div>
+            </div>
+            <div class="rec-block">
+              <div class="rec-label">RECOMMENDATION</div>
+              <div class="rec-val" id="repRec"></div>
+              <div class="conf-tag" id="repConf"></div>
+            </div>
           </div>
         </div>
 
-        <div class="panel" style="margin-bottom:12px;" id="repMacroPanel">
-          <div class="panel-head"><span>Macro Regime</span><span class="ph-dim">FRED</span></div>
+        <div class="report-section panel" style="margin-bottom:12px;" id="repMacroPanel">
+          <div class="panel-head"><span class="prism-label">Macro Regime</span><span class="ph-dim">FRED</span></div>
           <div class="panel-body">
             <div class="macro-badge" id="repRegime"></div>
             <div class="summary-text" id="repMacroSummary"></div>
           </div>
         </div>
 
-        <div class="panel" style="margin-bottom:12px;">
-          <div class="panel-head"><span>Executive Summary</span><span class="ph-dim">NOT FINANCIAL ADVICE</span></div>
+        <div class="report-section panel" style="margin-bottom:12px;" id="repCryptoPanel">
+          <div class="panel-head"><span class="prism-label">Market Structure</span><span class="ph-dim">CRYPTO SIGNALS</span></div>
+          <div class="panel-body">
+            <div class="crypto-signals-row" id="repCryptoSignals"></div>
+          </div>
+        </div>
+
+        <div class="report-section panel" style="margin-bottom:12px;">
+          <div class="panel-head"><span class="prism-label">Executive Summary</span><span class="ph-dim">NOT FINANCIAL ADVICE</span></div>
           <div class="panel-body">
             <div class="summary-text" id="repSummary"></div>
           </div>
         </div>
 
-        <div class="report-grid" style="margin-bottom:12px;" id="repBullBearRow">
+        <div class="report-section report-grid" style="margin-bottom:12px;" id="repBullBearRow">
           <div class="panel">
-            <div class="panel-head" style="color:var(--green);">Bull Case</div>
+            <div class="panel-head"><span class="prism-label" style="background: linear-gradient(90deg,#818cf8,#10b981);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">Bull Case</span></div>
             <div class="panel-body">
               <div class="thesis-text bull-text" id="repBull"></div>
               <ul class="catalyst-list bull-list" id="repCatalysts"></ul>
             </div>
           </div>
           <div class="panel">
-            <div class="panel-head" style="color:var(--red);">Bear Case</div>
+            <div class="panel-head"><span class="prism-label" style="background: linear-gradient(90deg,#818cf8,#ef4444);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">Bear Case</span></div>
             <div class="panel-body">
               <div class="thesis-text bear-text" id="repBear"></div>
               <ul class="catalyst-list bear-list" id="repRisks"></ul>
@@ -846,33 +1044,45 @@
           </div>
         </div>
 
-        <div class="report-grid" style="margin-bottom:12px;">
+        <div class="report-section report-grid" style="margin-bottom:12px;">
           <div class="panel">
-            <div class="panel-head"><span>Key Metrics</span></div>
+            <div class="panel-head"><span class="prism-label">Key Metrics</span></div>
             <div class="panel-body">
               <table class="metrics-table" id="repMetrics"></table>
             </div>
           </div>
           <div class="panel">
-            <div class="panel-head"><span>Analyst Agreement</span></div>
+            <div class="panel-head"><span class="prism-label">Analyst Agreement</span></div>
             <div class="panel-body">
               <div class="analyst-text" id="repAnalyst"></div>
             </div>
           </div>
         </div>
 
-        <div class="stack-row">
-          <div class="stack-chip">LANGGRAPH SUPERVISOR</div>
-          <div class="stack-chip">GPT-4.1-NANO × 6</div>
-          <div class="stack-chip">GPT-4.1-MINI × 1</div>
-          <div class="stack-chip">FRED API</div>
-          <div class="stack-chip">COINGECKO</div>
-          <div class="stack-chip">YFINANCE</div>
-          <div class="stack-chip">PYDANTIC V2</div>
-          <div class="stack-chip">LANGGRAPH HITL</div>
-          <div class="stack-chip">SQLITE CHECKPOINTING</div>
-          <div class="stack-chip">LANGSMITH</div>
+        <div class="report-section panel" style="margin-bottom:12px;" id="repProvenancePanel">
+          <div class="panel-head"><span class="prism-label">Data Sources</span><span class="ph-dim">PROVENANCE</span></div>
+          <div class="panel-body">
+            <div class="provenance-row" id="repProvenance"></div>
+          </div>
         </div>
+
+        <div class="report-section">
+          <div class="stack-row">
+            <div class="stack-chip">LANGGRAPH SUPERVISOR</div>
+            <div class="stack-chip">GPT-4.1-NANO × 6</div>
+            <div class="stack-chip">GPT-4.1-MINI × 1</div>
+            <div class="stack-chip">FRED API</div>
+            <div class="stack-chip">COINGECKO</div>
+            <div class="stack-chip">YFINANCE</div>
+            <div class="stack-chip">PYDANTIC V2</div>
+            <div class="stack-chip">LANGGRAPH HITL</div>
+            <div class="stack-chip">SQLITE CHECKPOINTING</div>
+            <div class="stack-chip">LANGSMITH</div>
+            <div class="stack-chip">POSTGRES</div>
+            <div class="stack-chip">RSS FEEDS</div>
+          </div>
+        </div>
+
       </div>
 
     </div>
@@ -880,6 +1090,7 @@
 </div>
 
 <script>
+  /* ── Clock ────────────────────────────────────────────────────────────── */
   function updateClock() {
     document.getElementById('clock').textContent =
       new Date().toLocaleTimeString('en-US', {
@@ -890,6 +1101,35 @@
   updateClock();
   setInterval(updateClock, 1000);
 
+  /* ── Typewriter ───────────────────────────────────────────────────────── */
+  let typewriterTimer = null;
+  function typewriter(text) {
+    const el = document.getElementById('cmdBarText');
+    if (typewriterTimer) { clearInterval(typewriterTimer); }
+    el.textContent = '';
+    let i = 0;
+    typewriterTimer = setInterval(() => {
+      el.textContent += text[i];
+      i++;
+      if (i >= text.length) clearInterval(typewriterTimer);
+    }, 18);
+  }
+
+  /* ── Number counter ───────────────────────────────────────────────────── */
+  function animateCount(el, target, suffix = '', decimals = 0, duration = 800) {
+    const start = performance.now();
+    const from = target > 10 ? target * 0.3 : 0;
+    function step(now) {
+      const progress = Math.min((now - start) / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const current = from + (target - from) * eased;
+      el.textContent = current.toFixed(decimals) + suffix;
+      if (progress < 1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  }
+
+  /* ── Asset detection ──────────────────────────────────────────────────── */
   const KNOWN_CRYPTO = new Set(['BTC','ETH','SOL','BNB','XRP','ADA','DOGE','AVAX','MATIC','DOT','LINK','LTC','UNI','ATOM','TRX']);
 
   function detectAssetClass(raw) {
@@ -922,6 +1162,7 @@
   let currentTimeframe = null;
   let currentAssetClass = null;
   let intermediateData = null;
+  let lastProvenanceData = null;
 
   function generateThreadId(ticker) {
     return `${ticker.toLowerCase()}-${Date.now()}`;
@@ -955,6 +1196,7 @@
     return (v * 100).toFixed(1) + '%';
   }
 
+  /* ── Analyze ──────────────────────────────────────────────────────────── */
   async function analyze() {
     const ticker = document.getElementById('ticker').value.trim().toUpperCase();
     const timeframe = document.getElementById('timeframe').value;
@@ -965,6 +1207,7 @@
     document.getElementById('emptyState').style.display = 'none';
     document.getElementById('reportView').classList.remove('visible');
     document.getElementById('pendingBanner').classList.remove('visible');
+    document.getElementById('signalBadge').classList.remove('visible');
     approveBtn.classList.remove('visible');
 
     if (!ticker) { showError('TICKER CANNOT BE EMPTY'); return; }
@@ -975,7 +1218,7 @@
 
     document.getElementById('graphTicker').textContent = ticker;
     document.getElementById('graphView').classList.add('visible');
-    document.getElementById('cmdBar').textContent = `RUNNING > ${ticker} / ${timeframe.toUpperCase()} — DEPLOYING FIRM...`;
+    typewriter(`RUNNING > ${ticker} / ${timeframe.toUpperCase()} — DEPLOYING FIRM...`);
 
     btn.disabled = true;
     btn.querySelector('.btn-label').textContent = 'RUNNING...';
@@ -1004,9 +1247,10 @@
 
       currentAssetClass = data.asset_class || 'equity';
       intermediateData = data.intermediate;
+      lastProvenanceData = data.data_provenance || {};
 
       setNode('data_fetch', 'done');
-      setNodeOutput('data_fetch', `<span class="node-output-val">${currentAssetClass.toUpperCase()}</span>`);
+      setNodeOutput('data_fetch', `<span class="node-output-val">${currentAssetClass.toUpperCase()}</span> · Provenance: ${Object.keys(lastProvenanceData).length} sources tracked`);
       setEl('conn-data-macro', 'done');
 
       await delay(300);
@@ -1040,7 +1284,7 @@
 
         setNode('onchain', 'done');
         setNodeOutput('onchain', onchain
-          ? `Health: <span class="node-output-val">${onchain.network_health}</span><br>Dev: ${fmt(onchain.developer_activity_score)} · Community: ${fmt(onchain.community_score)}`
+          ? `Health: <span class="node-output-val">${onchain.network_health}</span><br>F&G: ${onchain.fear_greed_score != null ? onchain.fear_greed_score : '—'} · ${onchain.fear_greed_label || ''}`
           : '—');
 
         setNode('sentiment-c', 'done');
@@ -1121,7 +1365,7 @@
       await delay(300);
       setNode('supervisor', 'awaiting');
 
-      document.getElementById('cmdBar').textContent = `PAUSED > ${ticker} — AWAITING PORTFOLIO MANAGER APPROVAL`;
+      typewriter(`PAUSED > ${ticker} — AWAITING PORTFOLIO MANAGER APPROVAL`);
       document.getElementById('pendingBanner').classList.add('visible');
       approveBtn.classList.add('visible');
 
@@ -1134,11 +1378,12 @@
     }
   }
 
+  /* ── Approve ──────────────────────────────────────────────────────────── */
   async function approve() {
     const approveBtn = document.getElementById('approveBtn');
     approveBtn.disabled = true;
     approveBtn.querySelector('.btn-label').textContent = 'GENERATING MEMO...';
-    document.getElementById('cmdBar').textContent = `GENERATING > ${currentTicker} — PORTFOLIO MANAGER SYNTHESISING...`;
+    typewriter(`GENERATING > ${currentTicker} — PORTFOLIO MANAGER SYNTHESISING...`);
 
     setNode('supervisor', 'running');
 
@@ -1156,11 +1401,13 @@
       const sr = data.supervisor_report;
       setNodeOutput('supervisor', `<span class="node-output-val">${sr.recommendation}</span> · Confidence: ${sr.confidence}`);
 
-      document.getElementById('cmdBar').textContent = `COMPLETE > ${currentTicker} — ${sr.recommendation.toUpperCase()} · ${sr.confidence.toUpperCase()} CONFIDENCE`;
+      typewriter(`COMPLETE > ${currentTicker} — ${sr.recommendation.toUpperCase()} · ${sr.confidence.toUpperCase()} CONFIDENCE`);
       document.getElementById('pendingBanner').classList.remove('visible');
       approveBtn.classList.remove('visible');
 
-      renderReport(data.ticker, data.asset_class, sr, intermediateData);
+      document.getElementById('signalBadge').classList.add('visible');
+
+      renderReport(data.ticker, data.asset_class, sr, intermediateData, lastProvenanceData);
 
     } catch (err) {
       showError('NETWORK ERROR — COULD NOT REACH PIPELINE');
@@ -1171,7 +1418,8 @@
     }
   }
 
-  function renderReport(ticker, assetClass, sr, intermediate) {
+  /* ── Render report ────────────────────────────────────────────────────── */
+  function renderReport(ticker, assetClass, sr, intermediate, provenance) {
     document.getElementById('repTicker').textContent = ticker;
     document.getElementById('repMeta').textContent = `${currentTimeframe.toUpperCase()} · ${(assetClass||'').toUpperCase()} · MULTI-AGENT RESEARCH DESK`;
 
@@ -1187,6 +1435,35 @@
       document.getElementById('repMacroSummary').textContent = macro.regime_summary || sr.macro_context || '—';
     } else {
       document.getElementById('repMacroPanel').style.display = 'none';
+    }
+
+    // ── Crypto signals panel ─────────────────────────────────────────────
+    const cryptoPanel = document.getElementById('repCryptoPanel');
+    if (assetClass === 'crypto') {
+      cryptoPanel.style.display = 'block';
+      const onchain = intermediate && intermediate.onchain;
+      const signalsEl = document.getElementById('repCryptoSignals');
+      signalsEl.innerHTML = '';
+
+      const fg = onchain && onchain.fear_greed_score;
+      const fgLabel = onchain && onchain.fear_greed_label;
+      const fgClass = fgLabel ? fgLabel.toLowerCase().replace(' ', '-') : '';
+
+      const items = [
+        { label: 'Fear & Greed', value: fg != null ? `${fg}/100` : '—', cls: fgClass },
+        { label: 'Classification', value: fgLabel || '—', cls: fgClass },
+        { label: 'Market Health', value: onchain ? onchain.network_health : '—', cls: '' },
+      ];
+
+      items.forEach(item => {
+        signalsEl.innerHTML += `
+          <div class="cs-item">
+            <div class="cs-label">${item.label}</div>
+            <div class="cs-value ${item.cls}">${item.value}</div>
+          </div>`;
+      });
+    } else {
+      cryptoPanel.style.display = 'none';
     }
 
     document.getElementById('repSummary').textContent = sr.summary || '—';
@@ -1215,14 +1492,33 @@
       });
     }
 
+    // ── Key metrics with number animation ───────────────────────────────
     const table = document.getElementById('repMetrics');
     table.innerHTML = '';
     (sr.key_metrics || []).forEach(m => {
       const idx = m.indexOf(':');
       const label = idx > -1 ? m.slice(0, idx).trim() : m;
       const val = idx > -1 ? m.slice(idx + 1).trim() : '—';
-      table.innerHTML += `<tr><td>${label}</td><td>${val}</td></tr>`;
+      const numMatch = val.match(/^([+-]?\d+\.?\d*)(.*)/);
+      if (numMatch) {
+        const num = parseFloat(numMatch[1]);
+        const suffix = numMatch[2] || '';
+        const decimals = numMatch[1].includes('.') ? numMatch[1].split('.')[1].length : 0;
+        table.innerHTML += `<tr><td>${label}</td><td><span class="count-val" data-target="${num}" data-suffix="${suffix}" data-decimals="${decimals}">—</span></td></tr>`;
+      } else {
+        table.innerHTML += `<tr><td>${label}</td><td>${val}</td></tr>`;
+      }
     });
+
+    // Animate counters after a short delay
+    setTimeout(() => {
+      document.querySelectorAll('.count-val[data-target]').forEach(el => {
+        const target = parseFloat(el.dataset.target);
+        const suffix = el.dataset.suffix || '';
+        const decimals = parseInt(el.dataset.decimals) || 0;
+        animateCount(el, target, suffix, decimals, 900);
+      });
+    }, 400);
 
     const ag = sr.analyst_agreement || '—';
     const agEl = document.getElementById('repAnalyst');
@@ -1230,6 +1526,23 @@
     agEl.className = 'analyst-text ' +
       (ag.toLowerCase().startsWith('agreed') ? 'agreed' :
        ag.toLowerCase().startsWith('disagreed') ? 'disagreed' : '');
+
+    // ── Data provenance panel ────────────────────────────────────────────
+    const provPanel = document.getElementById('repProvenancePanel');
+    const provEl = document.getElementById('repProvenance');
+    if (provenance && Object.keys(provenance).length > 0) {
+      provPanel.style.display = 'block';
+      provEl.innerHTML = '';
+      Object.entries(provenance).forEach(([key, val]) => {
+        provEl.innerHTML += `
+          <div class="prov-item">
+            <span class="prov-key">${key.toUpperCase()}</span>
+            <span class="prov-val">${val}</span>
+          </div>`;
+      });
+    } else {
+      provPanel.style.display = 'none';
+    }
 
     const rv = document.getElementById('reportView');
     rv.classList.add('visible');

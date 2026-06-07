@@ -104,6 +104,36 @@ class DataFetchAgent:
         if asset_class == "crypto":
             raw_data["coingecko"] = self._fetch_coingecko(ticker)
 
+            # Fetch crypto market structure signals
+            try:
+                from ingestion.crypto_signals import (
+                    fetch_fear_greed, fetch_btc_dominance, build_crypto_signals
+                )
+                fear_greed  = fetch_fear_greed()
+                btc_dom     = fetch_btc_dominance()
+                signals     = build_crypto_signals(ticker, fear_greed, btc_dom)
+                # Store as plain dict — LangGraph checkpoint serializer
+                # doesn't support custom dataclasses
+                raw_data["crypto_signals"] = {
+                    "prompt_context": signals.to_prompt_context(),
+                    "fear_greed_value": signals.fear_greed_value,
+                    "fear_greed_label": signals.fear_greed_label,
+                    "btc_dominance_pct": signals.btc_dominance_pct,
+                    "price_change_7d": signals.price_change_7d,
+                    "price_change_30d": signals.price_change_30d,
+                    "ath_change_pct": signals.ath_change_pct,
+                    "commits_4w": signals.developer.commits_4w if signals.developer else None,
+                    "github_momentum_pct": signals.developer.github_momentum_pct if signals.developer else None,
+                }
+                logger.info(
+                    f"CryptoSignals: fear_greed={fear_greed[0]} "
+                    f"btc_dominance={btc_dom} "
+                    f"gh_momentum={signals.developer.github_momentum_pct if signals.developer else None}"
+                )
+            except Exception as e:
+                logger.warning(f"crypto_signals fetch failed (non-fatal): {e}")
+                raw_data["crypto_signals"] = None
+
         raw_data["fred"] = fred_data
 
         # data_provenance — injected into state for SupervisorAgent transparency

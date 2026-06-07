@@ -107,5 +107,12 @@ class OnChainAnalyst:
         result.developer_activity_score = dev_score
         result.community_score = comm_score
 
-        logger.info(f"OnChainAnalyst complete for {ticker} — health={result.network_health} dev_score={dev_score} comm_score={comm_score}")
+        # Inject crypto signals into onchain state so frontend can display them
+        crypto_signals = state["raw_data"].get("crypto_signals") or {}
+        result.fear_greed_score = crypto_signals.get("fear_greed_value")
+        result.fear_greed_label = crypto_signals.get("fear_greed_label")
+        result.btc_dominance_pct = crypto_signals.get("btc_dominance_pct")
+        result.github_momentum_pct = crypto_signals.get("github_momentum_pct")
+
+        logger.info(f"OnChainAnalyst complete for {ticker} — health={result.network_health} dev_score={dev_score} comm_score={comm_score} fear_greed={result.fear_greed_score}")
         return {"onchain": result.model_dump()}

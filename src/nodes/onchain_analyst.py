@@ -29,6 +29,9 @@ Market Cap (USD): {market_cap}
 Developer Activity Score (0-100): {developer_score}
 Community Score (0-100): {community_score}
 
+--- MARKET STRUCTURE SIGNALS ---
+{crypto_signals_context}
+
 --- RECENT HEADLINES ---
 {headlines}
 
@@ -71,6 +74,14 @@ class OnChainAnalyst:
         dev_score = coingecko.get("developer_activity_score")
         comm_score = coingecko.get("community_score")
 
+        # Get crypto signals context for prompt injection
+        # Stored as plain dict to avoid LangGraph checkpoint serialization issues
+        crypto_signals = state["raw_data"].get("crypto_signals") or {}
+        crypto_signals_context = (
+            crypto_signals.get("prompt_context")
+            or "No market structure signals available."
+        )
+
         prompt = ONCHAIN_PROMPT.format(
             ticker=ticker,
             regime_label=fmt(macro.regime_label if macro else None),
@@ -80,6 +91,7 @@ class OnChainAnalyst:
             price_change_7d=fmt(price_change),
             developer_score=fmt(dev_score),
             community_score=fmt(comm_score),
+            crypto_signals_context=crypto_signals_context,
             headlines="\n".join(f"- {h}" for h in headlines[:10]) or "No headlines available",
         )
 

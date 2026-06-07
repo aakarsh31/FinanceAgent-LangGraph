@@ -679,7 +679,7 @@
     .crypto-signals-row {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
-      gap: 8px;
+      gap: 10px 8px;
       margin-bottom: 4px;
     }
     .cs-item {
@@ -1447,12 +1447,16 @@
 
       const fg = onchain && onchain.fear_greed_score;
       const fgLabel = onchain && onchain.fear_greed_label;
-      const fgClass = fgLabel ? fgLabel.toLowerCase().replace(' ', '-') : '';
+      const fgClass = fgLabel ? fgLabel.toLowerCase().replace(/ /g, '-') : '';
+      const btcDom = onchain && onchain.btc_dominance_pct;
+      const ghMom = onchain && onchain.github_momentum_pct;
 
       const items = [
         { label: 'Fear & Greed', value: fg != null ? `${fg}/100` : '—', cls: fgClass },
-        { label: 'Classification', value: fgLabel || '—', cls: fgClass },
-        { label: 'Market Health', value: onchain ? onchain.network_health : '—', cls: '' },
+        { label: 'Sentiment', value: fgLabel || '—', cls: fgClass },
+        { label: 'BTC Dominance', value: btcDom != null ? `${btcDom.toFixed(1)}%` : '—', cls: '' },
+        { label: 'Network Health', value: onchain ? onchain.network_health : '—', cls: '' },
+        { label: 'Dev Momentum', value: ghMom != null ? `${ghMom.toFixed(0)}% of avg` : '—', cls: '' },
       ];
 
       items.forEach(item => {

@@ -151,6 +151,22 @@ class OnChainData(BaseModel):
         default=None,
         description="CoinGecko community score 0-100 based on social engagement across Twitter, Reddit, and Telegram"
     )
+    fear_greed_score: Optional[int] = Field(
+        default=None,
+        description="Fear & Greed Index 0-100 from alternative.me"
+    )
+    fear_greed_label: Optional[str] = Field(
+        default=None,
+        description="Fear & Greed classification: Extreme Fear, Fear, Neutral, Greed, Extreme Greed"
+    )
+    btc_dominance_pct: Optional[float] = Field(
+        default=None,
+        description="BTC market dominance percentage from CoinGecko global"
+    )
+    github_momentum_pct: Optional[float] = Field(
+        default=None,
+        description="Developer commit momentum vs 52-week average"
+    )
     network_health: str = Field(
         description="LLM-assessed network health label: 'Strong', 'Moderate', or 'Weak' — based on available CoinGecko metrics"
     )

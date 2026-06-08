@@ -1,4 +1,5 @@
 import logging
+from langchain_core.messages import HumanMessage
 from src.states.financestate import FinanceState, MacroRegimeData
 from src.exceptions import LLMStructuredOutputError
 
@@ -13,35 +14,55 @@ VALID_REGIME_LABELS = [
     "Early Recovery",
 ]
 
-MACRO_PROMPT = """You are the MacroRegime Analyst at an investment research firm.
-Interpret the current macroeconomic environment using FRED data and classify it
-into a regime label that will inform every other analyst's thesis.
+MACRO_REFERENCE = """
+REGIME → ASSET IMPLICATIONS (from financial analysis cheat sheet):
+Risk-On Easing:      Equity BULLISH | Crypto BULLISH     | Fed falling, inflation contained
+Risk-On Tightening:  Equity SELECTIVE | Crypto CAUTIOUS   | Fed high, economy resilient
+Risk-Off Easing:     Equity BEARISH  | Crypto BEARISH     | Fed cutting due to weakness
+Risk-Off Tightening: Equity BEARISH  | Crypto STRONGLY BEARISH | High rates + slowing growth
+Stagflation:         Equity BEARISH  | Crypto MIXED       | High inflation + stalling growth
+Early Recovery:      Equity BULLISH  | Crypto BULLISH     | Low rates, unemployment falling
 
-Indicators:
-- Fed Funds Rate: current interest rate set by the Federal Reserve
-- CPI YoY: year-over-year inflation — above 3% is elevated, below 2% is low
-- Yield Curve Spread (10Y - 2Y): negative = inverted = recession signal
-- Unemployment Rate: above 5% is elevated, below 4% is tight labour market
+YIELD CURVE: >0.5% = normal | 0-0.5% = flat/caution | <0 = inverted (recession signal)
+FED FUNDS:   >4% = restrictive | 2-4% = neutral | <2% = accommodative
+CPI:         >3.5% = elevated | 2-3.5% = moderate | <2% = contained
+"""
 
-Your regime_label MUST be exactly one of:
-{valid_labels}
+MACRO_PROMPT = """You are the MacroRegime Analyst at an elite investment research firm.
+Your classification directly determines how every other analyst weights their thesis.
+Getting this wrong cascades through the entire pipeline. Be precise.
 
-Definitions:
-- Risk-On Easing: rates falling or low, inflation cooling, yield curve normalising
-- Risk-On Tightening: rates high but economy resilient, markets still performing
-- Risk-Off Easing: rates being cut in response to economic weakness
-- Risk-Off Tightening: rates high, growth slowing, yield curve inverted — high recession risk
-- Stagflation: inflation elevated AND growth slowing simultaneously
-- Early Recovery: rates low, CPI stable, unemployment falling
+INDICATOR DEFINITIONS AND THRESHOLDS:
+- Fed Funds Rate: Central bank benchmark rate. >4% = restrictive, 2-4% = neutral, <2% = accommodative
+- CPI YoY: Inflation. >3.5% = elevated, 2-3.5% = elevated-moderate, <2% = contained
+- Yield Curve Spread (10Y-2Y): Growth expectations. <0 = inverted (recession signal), 0-0.5 = flat (caution), >0.5 = normal
+- Unemployment: Labor market. <4% = tight (inflationary pressure), 4-5% = balanced, >5% = slack (growth concern)
 
-Current FRED Data:
+REGIME DECISION MATRIX (use this to reason):
+- Risk-On Easing: rates falling/low AND inflation cooling AND curve normal → buy risk assets
+- Risk-On Tightening: rates high BUT economy resilient, markets performing → cautious risk-on
+- Risk-Off Easing: rates being CUT in response to weakness → flight to safety, cuts not yet stimulative
+- Risk-Off Tightening: rates high + growth slowing + curve inverted → HIGH recession risk, defensive
+- Stagflation: CPI >3.5% AND growth slowing simultaneously → worst of both worlds, hard assets win
+- Early Recovery: rates low + CPI stable + unemployment falling → maximum risk-on, early cycle
+
+{macro_reference}
+CURRENT DATA:
 - Fed Funds Rate: {fed_funds_rate}%
 - CPI YoY: {cpi_yoy}%
-- Yield Curve Spread (10Y - 2Y): {yield_curve_spread} percentage points
+- Yield Curve Spread (10Y-2Y): {yield_curve_spread} percentage points
 - Unemployment Rate: {unemployment_rate}%
 
-Assign exactly one regime_label and write a 2-3 sentence regime_summary explaining
-the current environment and its implication for equity and crypto markets.
+REASONING STEPS (work through this before concluding):
+1. Is inflation elevated or contained?
+2. Is the yield curve normal, flat, or inverted?
+3. Is monetary policy restrictive or accommodative?
+4. Is growth accelerating or decelerating?
+5. Which regime label best fits the combination?
+
+Your output:
+- regime_label: EXACTLY one of: {valid_labels}
+- regime_summary: 2-3 sentences. State the regime, explain the key indicator combination that determined it, and specify the implication for BOTH equity AND crypto markets with directional clarity.
 """
 
 
@@ -67,7 +88,8 @@ class MacroRegimeAgent:
             return str(val) if val is not None else "unavailable"
 
         prompt = MACRO_PROMPT.format(
-            valid_labels="\n".join(f"  - {l}" for l in VALID_REGIME_LABELS),
+            macro_reference=MACRO_REFERENCE,
+            valid_labels=", ".join(f"'{l}'" for l in VALID_REGIME_LABELS),
             fed_funds_rate=fmt(fed_funds_rate),
             cpi_yoy=fmt(cpi_yoy),
             yield_curve_spread=fmt(yield_curve_spread),
@@ -75,15 +97,18 @@ class MacroRegimeAgent:
         )
 
         try:
-            result: MacroRegimeData = self.llm.invoke(prompt)
+            result: MacroRegimeData = self.llm.invoke([HumanMessage(content=prompt)])
         except Exception as e:
             logger.error(f"MacroRegimeAgent LLM call failed: {e}", exc_info=True)
-            raise LLMStructuredOutputError(f"MacroRegimeAgent failed to produce structured output: {e}")
+            raise LLMStructuredOutputError(f"MacroRegimeAgent failed: {e}")
 
         result.fed_funds_rate = fed_funds_rate
         result.cpi_yoy = cpi_yoy
         result.yield_curve_spread = yield_curve_spread
         result.unemployment_rate = unemployment_rate
 
-        logger.info(f"MacroRegimeAgent complete — regime='{result.regime_label}' fed={fed_funds_rate} cpi={cpi_yoy} spread={yield_curve_spread} u={unemployment_rate}")
+        logger.info(
+            f"MacroRegimeAgent complete — regime='{result.regime_label}' "
+            f"fed={fed_funds_rate} cpi={cpi_yoy} spread={yield_curve_spread} u={unemployment_rate}"
+        )
         return {"macro": result.model_dump()}

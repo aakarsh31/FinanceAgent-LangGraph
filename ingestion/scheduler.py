@@ -347,12 +347,27 @@ def run_macro_ingestion(engine: Engine) -> IngestionResult:
                     result.tickers_failed += 1
                     continue
 
-                latest_value = float(series.iloc[-1])
+                latest_raw = float(series.iloc[-1])
                 latest_period = str(series.index[-1].date())
+
+                # CPI is stored as the index level (e.g. 314.2), not YoY %.
+                # Compute YoY here so what lands in processed_macro is the
+                # same ~3.x% figure that agents expect — not 314%.
+                if indicator_name == "cpi_yoy":
+                    if len(series) >= 13:
+                        cpi_year_ago = float(series.iloc[-13])
+                        latest_value = round((latest_raw - cpi_year_ago) / cpi_year_ago * 100, 2)
+                    else:
+                        logger.warning("[macro] CPI series too short for YoY — skipping")
+                        result.tickers_failed += 1
+                        continue
+                else:
+                    latest_value = latest_raw
 
                 raw_payload = {
                     "series_id": series_id,
-                    "latest_value": latest_value,
+                    "latest_raw": latest_raw,       # raw FRED level — kept for auditability
+                    "latest_value": latest_value,   # processed value stored in processed_macro
                     "latest_period": latest_period,
                 }
 

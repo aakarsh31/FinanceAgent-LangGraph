@@ -21,8 +21,29 @@ Environment variables required (same as web service):
 import logging
 import os
 import sys
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from dotenv import load_dotenv
+
+
+class HealthHandler(BaseHTTPRequestHandler):
+    """Minimal HTTP handler for Railway health checks."""
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"ok")
+
+    def log_message(self, format, *args):
+        pass  # suppress access logs
+
+
+def start_health_server(port: int = 8080):
+    """Start health check HTTP server in a background thread."""
+    server = HTTPServer(("0.0.0.0", port), HealthHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server
 
 load_dotenv()
 
@@ -53,6 +74,12 @@ from ingestion.scheduler import (
 
 def main():
     logger.info("Worker starting up...")
+
+    # Start health check server — prevents Railway from restarting the worker
+    # Railway pings this endpoint to verify the service is alive
+    health_port = int(os.getenv("PORT", "8080"))
+    start_health_server(health_port)
+    logger.info(f"Health check server started on port {health_port}")
 
     # Validate required env vars before doing anything
     required = ["DATABASE_URL", "FMP_API_KEY", "FINNHUB_API_KEY", "FRED_API_KEY"]

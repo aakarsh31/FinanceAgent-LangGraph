@@ -27,7 +27,6 @@ Your job is to extract the market's TRUE emotional state from headlines — not 
 Sentiment drives short-term price action even when it conflicts with fundamentals.
 
 {sentiment_reference}
-{sentiment_reference}
 SCORING FRAMEWORK:
 - Score range: -1.0 (maximum bearish) to +1.0 (maximum bullish)
 - +0.7 to +1.0: Euphoria / strong momentum — analysts upgrading, earnings beats, major catalysts
@@ -68,6 +67,14 @@ Crypto sentiment is more volatile and self-reinforcing than equity sentiment. Fe
 Your job is to assess the TRUE market emotional state — not what should happen, but what the market believes NOW.
 
 SCORING FRAMEWORK:
+- Score range: -1.0 (maximum bearish) to +1.0 (maximum bullish)
+- +0.7 to +1.0: Euphoria — mainstream adoption news, ETF inflows, institutional buying, protocol milestones
+- +0.3 to +0.7: Bullish — positive regulatory news, network upgrades, developer activity acceleration
+- -0.3 to +0.3: Neutral — mixed signals, consolidation, no directional catalyst
+- -0.3 to -0.7: Bearish — regulatory crackdowns, exchange issues, hack/exploit news, whale selling
+- -0.7 to -1.0: Fear/capitulation — exchange collapses, major regulatory bans, security breaches, market-wide deleveraging
+
+CRYPTO-SPECIFIC SIGNAL WEIGHTS:
 - Score range: -1.0 (maximum bearish) to +1.0 (maximum bullish)
 - +0.7 to +1.0: Euphoria — mainstream adoption news, ETF inflows, institutional buying, protocol milestones
 - +0.3 to +0.7: Bullish — positive regulatory news, network upgrades, developer activity acceleration
@@ -132,7 +139,6 @@ class SentimentAgent:
                 community_score=fmt(coingecko.get("community_score")),
                 price_change_7d=fmt(coingecko.get("price_change_7d")),
                 fear_greed=fg_str,
-                sentiment_reference=SENTIMENT_REFERENCE,
             )
         else:
             prompt = SENTIMENT_PROMPT_EQUITY.format(

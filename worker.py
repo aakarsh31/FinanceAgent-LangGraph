@@ -14,7 +14,6 @@ Start command in Railway:
 Environment variables required (same as web service):
     DATABASE_URL
     FMP_API_KEY
-    FINNHUB_API_KEY
     FRED_API_KEY
 """
 
@@ -82,7 +81,7 @@ def main():
     logger.info(f"Health check server started on port {health_port}")
 
     # Validate required env vars before doing anything
-    required = ["DATABASE_URL", "FMP_API_KEY", "FINNHUB_API_KEY", "FRED_API_KEY"]
+    required = ["DATABASE_URL", "FMP_API_KEY", "FRED_API_KEY"]
     missing = [k for k in required if not os.getenv(k)]
     if missing:
         logger.error(f"Missing required environment variables: {missing}")

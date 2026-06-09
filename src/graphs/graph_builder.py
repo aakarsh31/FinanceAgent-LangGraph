@@ -66,15 +66,15 @@ class GraphBuilder:
         graph.add_conditional_edges("macro_regime_agent", route_by_asset_class)
 
         # equity wave 1 → wave 2
+        # bull/bear wait for all three wave-1 agents (they use macro, sentiment, risk, fundamentals)
+        # valuation only needs fundamentals — runs parallel to sentiment/risk, not after them
         graph.add_edge("fundamentals_agent", "bull_analyst")
         graph.add_edge("fundamentals_agent", "bear_analyst")
         graph.add_edge("fundamentals_agent", "valuation_analyst")
         graph.add_edge("sentiment_agent", "bull_analyst")
         graph.add_edge("sentiment_agent", "bear_analyst")
-        graph.add_edge("sentiment_agent", "valuation_analyst")
         graph.add_edge("risk_agent", "bull_analyst")
         graph.add_edge("risk_agent", "bear_analyst")
-        graph.add_edge("risk_agent", "valuation_analyst")
 
         # wave 2 → supervisor
         graph.add_edge("bull_analyst", "supervisor_agent")

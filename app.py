@@ -13,6 +13,8 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from ingestion.db import get_engine, init_db
 from evaluation.db_eval import init_eval_db
 from evaluation.signal_store import record_signal
+from alpaca.trade_executor import maybe_execute_trade
+from alpaca.client import AlpacaClient, AlpacaError
 
 import os
 from dotenv import load_dotenv
@@ -239,12 +241,28 @@ async def approve(thread_id: str):
         except Exception as e:
             logger.error(f"Signal recording failed for {ticker} (non-fatal): {e}")
 
+    # Execute paper trade — High confidence equity signals only, non-fatal
+    trade_result = {"traded": False, "skipped_reason": "alpaca_not_configured", "order": None, "error": None}
+    if os.getenv("APCA_API_KEY_ID") and supervisor_report:
+        trade_result = maybe_execute_trade(
+            ticker=ticker,
+            asset_class=asset_class,
+            supervisor_report=supervisor_report,
+        )
+        if trade_result["traded"]:
+            logger.info(f"Paper trade executed — {ticker} order_id={trade_result['order']['order_id']}")
+        elif trade_result["error"]:
+            logger.warning(f"Paper trade failed for {ticker}: {trade_result['error']}")
+        else:
+            logger.info(f"Paper trade skipped — {ticker} reason={trade_result['skipped_reason']}")
+
     return {
         "status": "complete",
         "thread_id": thread_id,
         "ticker": ticker,
         "asset_class": asset_class,
         "supervisor_report": supervisor_report,
+        "trade": trade_result,
     }
 
 
@@ -314,6 +332,78 @@ async def evaluate():
     except Exception as e:
         logger.error(f"/evaluate failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Eval query failed")
+
+
+
+# ── /portfolio ────────────────────────────────────────────────────────────────
+
+@app.get("/portfolio")
+async def portfolio():
+    """
+    Returns Alpaca paper trading portfolio — account summary, open positions,
+    equity curve, and recent orders. Powers the frontend Portfolio panel.
+    """
+    if not os.getenv("APCA_API_KEY_ID"):
+        raise HTTPException(status_code=503, detail="Alpaca not configured")
+
+    try:
+        client = AlpacaClient()
+        account = client.get_account()
+        positions = client.get_positions()
+        history = client.get_portfolio_history(period="1M", timeframe="1D")
+        orders = client.get_orders(limit=20)
+
+        # Compute total P&L from base value
+        base_value = history.get("base_value") or account["equity"]
+        total_pnl = round(account["equity"] - base_value, 2)
+        total_pnl_pct = round((total_pnl / base_value) * 100, 2) if base_value > 0 else 0.0
+
+        # Win rate — filled orders only
+        filled = [o for o in orders if o["status"] == "filled"]
+        wins = [
+            o for o in filled
+            if (o["side"] == "buy" and (o.get("filled_avg_price") or 0) > 0)
+        ]
+
+        return {
+            "status": "ok",
+            "account": {
+                **account,
+                "total_pnl": total_pnl,
+                "total_pnl_pct": total_pnl_pct,
+            },
+            "positions": positions,
+            "equity_curve": history,
+            "recent_orders": orders,
+            "stats": {
+                "trades_placed": len(filled),
+                "open_positions": len(positions),
+            },
+        }
+    except AlpacaError as e:
+        logger.error(f"/portfolio failed: {e}")
+        raise HTTPException(status_code=502, detail=str(e))
+    except Exception as e:
+        logger.error(f"/portfolio unexpected error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Portfolio fetch failed")
+
+
+# ── /orders ───────────────────────────────────────────────────────────────────
+
+@app.get("/orders")
+async def orders():
+    """Returns recent paper trading order history."""
+    if not os.getenv("APCA_API_KEY_ID"):
+        raise HTTPException(status_code=503, detail="Alpaca not configured")
+
+    try:
+        client = AlpacaClient()
+        return {
+            "status": "ok",
+            "orders": client.get_orders(limit=50),
+        }
+    except AlpacaError as e:
+        raise HTTPException(status_code=502, detail=str(e))
 
 
 if __name__ == "__main__":

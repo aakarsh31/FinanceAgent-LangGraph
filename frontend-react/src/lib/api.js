@@ -1,4 +1,6 @@
-const BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// In prod, API is served from the same origin — use relative URLs
+// In dev, proxy via vite.config.js forwards to localhost:8000
+const BASE = import.meta.env.VITE_API_URL || '';
 
 export const api = {
   analyze: (ticker, timeframe, threadId) =>

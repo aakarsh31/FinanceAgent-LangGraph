@@ -23,4 +23,5 @@ dependencies = [
     "psycopg2-binary>=2.9.0",
     "apscheduler>=3.10.0",
     "feedparser>=6.0.0",
+    "alpaca-py>=0.43.4",
 ]

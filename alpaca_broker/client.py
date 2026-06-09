@@ -111,22 +111,28 @@ class AlpacaClient:
     def place_stop_loss(self, ticker: str, qty: float, stop_price: float) -> dict | None:
         """
         Place a stop-loss order for an existing position.
+        Cancels any conflicting open orders first to avoid wash trade rejection.
         Non-fatal — logs failure but doesn't raise.
-
-        Args:
-            ticker:      e.g. 'AAPL'
-            qty:         number of shares to protect
-            stop_price:  price at which to trigger the sell
         """
-        from alpaca.trading.requests import StopOrderRequest
-        from alpaca.trading.enums import OrderSide, TimeInForce
+        from alpaca.trading.requests import StopOrderRequest, GetOrdersRequest
+        from alpaca.trading.enums import OrderSide, TimeInForce, QueryOrderStatus
 
         try:
+            # Cancel any open orders for this ticker to avoid wash trade rejection
+            open_orders_req = GetOrdersRequest(status=QueryOrderStatus.OPEN, symbols=[ticker])
+            open_orders = self._trading.get_orders(filter=open_orders_req)
+            for o in open_orders:
+                try:
+                    self._trading.cancel_order_by_id(o.id)
+                    logger.info(f"[Alpaca] Cancelled open order {o.id} for {ticker} before stop-loss")
+                except Exception as ce:
+                    logger.warning(f"[Alpaca] Could not cancel order {o.id}: {ce}")
+
             stop_request = StopOrderRequest(
                 symbol=ticker,
                 qty=round(float(qty), 6),
                 side=OrderSide.SELL,
-                time_in_force=TimeInForce.GTC,  # Good Till Cancelled
+                time_in_force=TimeInForce.DAY,
                 stop_price=round(stop_price, 2),
             )
             order = self._trading.submit_order(stop_request)

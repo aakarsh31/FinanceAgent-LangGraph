@@ -2,6 +2,12 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# Install Node.js for React build
+RUN apt-get update && apt-get install -y curl && \
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y nodejs && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
 # Install uv
 RUN pip install uv
 
@@ -9,11 +15,14 @@ RUN pip install uv
 COPY pyproject.toml .
 COPY uv.lock .
 
-# Install dependencies
+# Install Python dependencies
 RUN uv sync --frozen
 
 # Copy source code
 COPY . .
+
+# Build React frontend
+RUN cd frontend-react && npm install && npm run build
 
 # Expose port
 EXPOSE 8000

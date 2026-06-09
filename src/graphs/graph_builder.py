@@ -64,6 +64,10 @@ class GraphBuilder:
         graph.add_node("technical_analyst", technical.analyze)
         graph.add_node("supervisor_agent", supervisor.analyze)
 
+        # HITL gate — dummy node that exists purely to be interrupted after supervisor
+        # The actual trade execution happens in app.py /approve, not in the graph
+        graph.add_node("trade_gate", lambda state: state)
+
         graph.add_edge(START, "data_fetch")
         graph.add_edge("data_fetch", "macro_regime_agent")
         graph.add_conditional_edges("macro_regime_agent", route_by_asset_class)
@@ -89,7 +93,8 @@ class GraphBuilder:
         # crypto → supervisor
         graph.add_edge("onchain_analyst", "supervisor_agent")
 
-        graph.add_edge("supervisor_agent", END)
+        graph.add_edge("supervisor_agent", "trade_gate")
+        graph.add_edge("trade_gate", END)
 
         return graph
 
@@ -97,5 +102,5 @@ class GraphBuilder:
         graph = self.build()
         return graph.compile(
             checkpointer=checkpointer,
-            interrupt_before=["supervisor_agent"] if hitl else [],
+            interrupt_before=["trade_gate"] if hitl else [],
         )

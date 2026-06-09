@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 from src.graphs.graph_builder import GraphBuilder
 from src.exceptions import FinanceAgentError
@@ -15,6 +16,7 @@ from evaluation.db_eval import init_eval_db
 from evaluation.signal_store import record_signal
 from alpaca_broker.trade_executor import maybe_execute_trade
 from alpaca_broker.client import AlpacaClient, AlpacaError
+
 import os
 from dotenv import load_dotenv
 import logging
@@ -118,6 +120,15 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.mount("/static", StaticFiles(directory="frontend"), name="static")
 
 
@@ -167,9 +178,10 @@ async def analyze(request: Request):
         logger.error(f"Unexpected error for {ticker}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal pipeline error")
 
-    # Pipeline suspended before supervisor_agent — return intermediate data
+    # Pipeline suspended before trade_gate — supervisor has already run
     asset_class = state.get("asset_class", "equity")
-    logger.info(f"Pipeline paused before supervisor_agent — ticker={ticker} asset_class={asset_class}")
+    supervisor_report = state.get("supervisor_report", {})
+    logger.info(f"Pipeline paused before trade_gate — ticker={ticker} asset_class={asset_class} recommendation={supervisor_report.get('recommendation') if supervisor_report else 'N/A'}")
 
     # Build intermediate payload — asset-class aware
     intermediate: dict = {
@@ -178,6 +190,7 @@ async def analyze(request: Request):
         "risk": state.get("risk"),
         "sentiment": state.get("sentiment"),
         "analyst_consensus": state.get("analyst_consensus"),
+        "technical": state.get("technical"),
     }
 
     if asset_class == "equity":
@@ -197,6 +210,7 @@ async def analyze(request: Request):
         "thread_id": thread_id,
         "ticker": ticker,
         "asset_class": asset_class,
+        "supervisor_report": supervisor_report,
         "intermediate": intermediate,
         "data_provenance": state.get("data_provenance", {}),
     }
@@ -210,20 +224,20 @@ async def approve(thread_id: str):
     logger.info(f"/approve — thread_id={thread_id}")
 
     try:
-        # None input = resume existing thread from last checkpoint
+        # Resume past trade_gate — supervisor already ran in /analyze
         state = graph.invoke(None, config=config)
     except FinanceAgentError as e:
-        logger.error(f"Supervisor generation failed for {thread_id}: {e}", exc_info=True)
+        logger.error(f"Approval failed for {thread_id}: {e}", exc_info=True)
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Unexpected error resuming {thread_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal pipeline error")
 
-    logger.info(f"Supervisor report generated for thread_id={thread_id}")
-
     ticker = state["ticker"]
     asset_class = state.get("asset_class", "equity")
     supervisor_report = state.get("supervisor_report", {})
+
+    logger.info(f"Trade gate approved for thread_id={thread_id} — recommendation={supervisor_report.get('recommendation') if supervisor_report else 'N/A'}")
 
     # Record signal for evaluation — non-fatal
     if pg_engine and supervisor_report:
@@ -241,7 +255,7 @@ async def approve(thread_id: str):
             logger.error(f"Signal recording failed for {ticker} (non-fatal): {e}")
 
     # Execute paper trade — High confidence equity signals only, non-fatal
-    trade_result = {"traded": False, "skipped_reason": "alpaca_not_configured", "order": None, "error": None}
+    trade_result = {"traded": False, "skipped_reason": "alpaca_not_configured", "order": None, "stop_loss": None, "error": None}
     if os.getenv("APCA_API_KEY_ID") and supervisor_report:
         trade_result = maybe_execute_trade(
             ticker=ticker,

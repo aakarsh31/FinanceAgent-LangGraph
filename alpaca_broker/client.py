@@ -108,6 +108,34 @@ class AlpacaClient:
         except Exception as e:
             raise AlpacaError(f"place_order failed for {ticker}: {e}")
 
+    def place_stop_loss(self, ticker: str, qty: float, stop_price: float) -> dict | None:
+        """
+        Place a stop-loss order for an existing position.
+        Non-fatal — logs failure but doesn't raise.
+
+        Args:
+            ticker:      e.g. 'AAPL'
+            qty:         number of shares to protect
+            stop_price:  price at which to trigger the sell
+        """
+        from alpaca.trading.requests import StopOrderRequest
+        from alpaca.trading.enums import OrderSide, TimeInForce
+
+        try:
+            stop_request = StopOrderRequest(
+                symbol=ticker,
+                qty=round(float(qty), 6),
+                side=OrderSide.SELL,
+                time_in_force=TimeInForce.GTC,  # Good Till Cancelled
+                stop_price=round(stop_price, 2),
+            )
+            order = self._trading.submit_order(stop_request)
+            logger.info(f"[Alpaca] Stop-loss placed — SELL {qty} {ticker} @ ${stop_price:.2f} | id={order.id}")
+            return _serialize_order(order)
+        except Exception as e:
+            logger.warning(f"[Alpaca] Stop-loss placement failed for {ticker} (non-fatal): {e}")
+            return None
+
     def get_orders(self, limit: int = 20) -> list[dict]:
         """Return recent orders (filled + pending)."""
         from alpaca.trading.requests import GetOrdersRequest

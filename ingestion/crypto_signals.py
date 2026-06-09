@@ -87,11 +87,12 @@ class CryptoSignals:
             lines.append(f"BTC Dominance: {self.btc_dominance_pct:.1f}%")
 
         if self.price_change_7d is not None:
-            lines.append(
-                f"Price Momentum: 7d={self.price_change_7d:+.1f}%  "
-                f"30d={self.price_change_30d:+.1f}%  "
-                f"vs ATH={self.ath_change_pct:+.1f}%"
-            )
+            parts = [f"7d={self.price_change_7d:+.1f}%"]
+            if self.price_change_30d is not None:
+                parts.append(f"30d={self.price_change_30d:+.1f}%")
+            if self.ath_change_pct is not None:
+                parts.append(f"vs ATH={self.ath_change_pct:+.1f}%")
+            lines.append(f"Price Momentum: {'  '.join(parts)}")
 
         if self.developer:
             dev = self.developer

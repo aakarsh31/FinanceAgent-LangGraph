@@ -12,13 +12,14 @@ from src.nodes.bull_analyst import BullAnalyst
 from src.nodes.bear_analyst import BearAnalyst
 from src.nodes.valuation_analyst import ValuationAnalyst
 from src.nodes.onchain_analyst import OnChainAnalyst
+from src.nodes.technical_analyst import TechnicalAnalyst
 from src.nodes.supervisor_agent import SupervisorAgent
 
 
 def route_by_asset_class(state: FinanceState) -> list[str]:
     asset_class = state["asset_class"]
     if asset_class == "equity":
-        return ["fundamentals_agent", "sentiment_agent", "risk_agent"]
+        return ["fundamentals_agent", "sentiment_agent", "risk_agent", "technical_analyst"]
     elif asset_class == "crypto":
         return ["onchain_analyst", "sentiment_agent", "risk_agent"]
     else:
@@ -48,6 +49,7 @@ class GraphBuilder:
         bear = BearAnalyst(self.fast_llm)
         valuation = ValuationAnalyst(self.fast_llm)
         onchain = OnChainAnalyst(self.fast_llm)
+        technical = TechnicalAnalyst(self.fast_llm)
         supervisor = SupervisorAgent(self.smart_llm)
 
         graph.add_node("data_fetch", data_fetch.fetch)
@@ -59,6 +61,7 @@ class GraphBuilder:
         graph.add_node("bear_analyst", bear.analyze)
         graph.add_node("valuation_analyst", valuation.analyze)
         graph.add_node("onchain_analyst", onchain.analyze)
+        graph.add_node("technical_analyst", technical.analyze)
         graph.add_node("supervisor_agent", supervisor.analyze)
 
         graph.add_edge(START, "data_fetch")
@@ -66,8 +69,8 @@ class GraphBuilder:
         graph.add_conditional_edges("macro_regime_agent", route_by_asset_class)
 
         # equity wave 1 → wave 2
-        # bull/bear wait for all three wave-1 agents (they use macro, sentiment, risk, fundamentals)
-        # valuation only needs fundamentals — runs parallel to sentiment/risk, not after them
+        # bull/bear wait for all wave-1 agents (they use macro, sentiment, risk, fundamentals, technical)
+        # valuation only needs fundamentals — runs parallel to sentiment/risk/technical
         graph.add_edge("fundamentals_agent", "bull_analyst")
         graph.add_edge("fundamentals_agent", "bear_analyst")
         graph.add_edge("fundamentals_agent", "valuation_analyst")
@@ -75,6 +78,8 @@ class GraphBuilder:
         graph.add_edge("sentiment_agent", "bear_analyst")
         graph.add_edge("risk_agent", "bull_analyst")
         graph.add_edge("risk_agent", "bear_analyst")
+        graph.add_edge("technical_analyst", "bull_analyst")
+        graph.add_edge("technical_analyst", "bear_analyst")
 
         # wave 2 → supervisor
         graph.add_edge("bull_analyst", "supervisor_agent")

@@ -228,6 +228,7 @@ class FinanceState(TypedDict):
     bear_thesis: Optional[BearThesis]
     valuation: Optional[ValuationData]
     risk: Optional[RiskData]
+    technical: Optional[dict]   # TechnicalData as dict — avoids checkpoint serializer issues
 
     # ── Crypto subagent outputs ────────────────────────────────────────────────
     sentiment: Optional[SentimentData]

@@ -48,6 +48,10 @@ Revenue Trend: {revenue_trend}
 Leverage: {leverage_level}
 Valuation: {valuation_label}
 
+--- TECHNICAL ANALYSIS ---
+Signal: {technical_signal} | Trend: {technical_trend} | Momentum: {technical_momentum}
+Key Levels: {technical_levels}
+
 --- SENTIMENT ---
 Score: {sentiment_score}/1.0 | Label: {sentiment_label}
 Reasoning: {sentiment_reasoning}
@@ -148,6 +152,13 @@ class BearAnalyst:
         leverage_level = _leverage_level(f.get("debt_to_equity"))
         valuation_label = fmt(f.get("valuation_label") or m.get("valuation_label") or state.get("valuation", {}).get("valuation_label") if isinstance(state.get("valuation"), dict) else None)
 
+        # Technical signals
+        tech = state.get("technical") or {}
+        technical_signal = tech.get("signal", "unavailable")
+        technical_trend = tech.get("trend", "unavailable")
+        technical_momentum = tech.get("momentum", "unavailable")
+        technical_levels = ", ".join(tech.get("key_levels", [])) or "unavailable"
+
         prompt = BEAR_PROMPT.format(
             ticker=ticker,
             bear_reference=BEAR_REFERENCE,
@@ -157,6 +168,10 @@ class BearAnalyst:
             revenue_trend=revenue_trend,
             leverage_level=leverage_level,
             valuation_label=valuation_label,
+            technical_signal=technical_signal,
+            technical_trend=technical_trend,
+            technical_momentum=technical_momentum,
+            technical_levels=technical_levels,
             sentiment_score=fmt(s.get("sentiment_score")),
             sentiment_label=fmt(s.get("sentiment_label")),
             sentiment_reasoning=fmt(s.get("sentiment_reasoning")),

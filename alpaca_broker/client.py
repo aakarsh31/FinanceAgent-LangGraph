@@ -75,16 +75,15 @@ class AlpacaClient:
 
     # ── Orders ────────────────────────────────────────────────────────────────
 
-    def place_order(self, ticker: str, side: str, notional_usd: float = 500.0) -> dict:
+    def place_order(self, ticker: str, side: str, notional_usd: float = 500.0, qty: float = None) -> dict:
         """
-        Place a notional market order.
+        Place a market order by notional amount (buys) or qty (sells).
 
         Args:
             ticker:       e.g. 'AAPL'
             side:         'buy' or 'sell'
-            notional_usd: dollar amount to trade (default $500 paper money)
-
-        Returns dict with order_id, status, filled_at etc.
+            notional_usd: dollar amount for buys (default $500)
+            qty:          share quantity for sells (closes existing position)
         """
         from alpaca.trading.requests import MarketOrderRequest
         from alpaca.trading.enums import OrderSide, TimeInForce
@@ -96,12 +95,13 @@ class AlpacaClient:
         try:
             order_request = MarketOrderRequest(
                 symbol=ticker,
-                notional=round(notional_usd, 2),
+                qty=round(float(qty), 6) if qty is not None else None,
+                notional=round(notional_usd, 2) if qty is None else None,
                 side=OrderSide.BUY if side == "buy" else OrderSide.SELL,
                 time_in_force=TimeInForce.DAY,
             )
             order = self._trading.submit_order(order_request)
-            logger.info(f"[Alpaca] Order placed — {side.upper()} ${notional_usd} {ticker} | id={order.id} status={order.status}")
+            logger.info(f"[Alpaca] Order placed — {side.upper()} {ticker} | id={order.id} status={order.status}")
             return _serialize_order(order)
         except AlpacaError:
             raise
@@ -147,7 +147,7 @@ class AlpacaClient:
                 timeframe=timeframe,
                 intraday_reporting="market_hours",
             )
-            history = self._trading.get_portfolio_history(filter=request)
+            history = self._trading.get_portfolio_history(request)
             return {
                 "timestamps": [
                     datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()

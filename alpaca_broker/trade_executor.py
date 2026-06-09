@@ -1,16 +1,16 @@
 """
-alpaca/trade_executor.py — Trade execution logic
+alpaca_broker/trade_executor.py — Trade execution logic
 
 Sits between /approve and AlpacaClient.
 Enforces rules:
   1. Equity only (no crypto — Alpaca paper trading doesn't support it)
   2. High confidence signals only
-  3. Buy → market buy order | Sell → market sell order | Hold → no trade
+  3. Buy → market buy order | Sell → close existing position | Hold → no trade
   4. Non-fatal — a trade failure never breaks the /approve response
 """
 
 import logging
-from alpaca.client import AlpacaClient, AlpacaError
+from alpaca_broker.client import AlpacaClient, AlpacaError
 
 logger = logging.getLogger(__name__)
 
@@ -30,9 +30,9 @@ def maybe_execute_trade(
     Returns:
         {
             "traded": bool,
-            "skipped_reason": str | None,   # set if traded=False
-            "order": dict | None,           # set if traded=True
-            "error": str | None,            # set if trade was attempted but failed
+            "skipped_reason": str | None,
+            "order": dict | None,
+            "error": str | None,
         }
     """
     recommendation = (supervisor_report.get("recommendation") or "").strip().capitalize()
@@ -65,9 +65,22 @@ def maybe_execute_trade(
     # Place the trade
     try:
         client = AlpacaClient()
-        order = client.place_order(ticker=ticker, side=side, notional_usd=NOTIONAL_PER_TRADE_USD)
-        logger.info(f"[TradeExecutor] Trade placed — {side.upper()} ${NOTIONAL_PER_TRADE_USD} {ticker} | order_id={order['order_id']}")
+
+        # For Sell signals — only sell if we actually hold the position
+        # Alpaca paper trading doesn't support fractional short selling
+        if side == "sell":
+            positions = client.get_positions()
+            held = next((p for p in positions if p["ticker"] == ticker), None)
+            if not held:
+                logger.info(f"[TradeExecutor] Skipping SELL {ticker} — no position held")
+                return {"traded": False, "skipped_reason": "no_position_to_sell", "order": None, "error": None}
+            order = client.place_order(ticker=ticker, side=side, notional_usd=None, qty=held["qty"])
+        else:
+            order = client.place_order(ticker=ticker, side=side, notional_usd=NOTIONAL_PER_TRADE_USD)
+
+        logger.info(f"[TradeExecutor] Trade placed — {side.upper()} {ticker} | order_id={order['order_id']}")
         return {"traded": True, "skipped_reason": None, "order": order, "error": None}
+
     except AlpacaError as e:
         logger.error(f"[TradeExecutor] Trade failed for {ticker} (non-fatal): {e}")
         return {"traded": False, "skipped_reason": None, "order": None, "error": str(e)}

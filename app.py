@@ -131,9 +131,17 @@ app.add_middleware(
 
 app.mount("/static", StaticFiles(directory="frontend"), name="static")
 
+# Serve React build if it exists, fall back to old frontend
+import pathlib
+REACT_DIST = pathlib.Path("frontend-react/dist")
+
+if REACT_DIST.exists():
+    app.mount("/assets", StaticFiles(directory=str(REACT_DIST / "assets")), name="assets")
 
 @app.get("/")
 async def serve_frontend():
+    if REACT_DIST.exists():
+        return FileResponse(str(REACT_DIST / "index.html"))
     return FileResponse("frontend/index.html")
 
 

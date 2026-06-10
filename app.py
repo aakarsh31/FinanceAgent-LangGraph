@@ -4,11 +4,12 @@ import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, Header, Depends
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 
+from sqlalchemy import text
 from src.graphs.graph_builder import GraphBuilder
 from src.exceptions import FinanceAgentError
 from langgraph.checkpoint.sqlite import SqliteSaver
@@ -271,12 +272,69 @@ async def analyze(request: Request):
     }
 
 
+# ── HITL auth + audit ────────────────────────────────────────────────────────
+
+def verify_approver_key(x_api_key: str = Header(default=None)):
+    """
+    Require X-API-Key header matching APPROVER_API_KEY env var.
+    If APPROVER_API_KEY is not set, auth is disabled (dev mode).
+    """
+    required_key = os.getenv("APPROVER_API_KEY")
+    if required_key and x_api_key != required_key:
+        raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key")
+
+
+def _get_existing_decision(thread_id: str) -> str | None:
+    """Return existing decision for thread_id from audit log, or None."""
+    if not pg_engine:
+        return None
+    try:
+        with pg_engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT decision FROM approval_audit WHERE thread_id = :tid"),
+                {"tid": thread_id}
+            ).fetchone()
+            return row[0] if row else None
+    except Exception:
+        return None
+
+
+def _write_audit_log(thread_id: str, decision: str, ticker: str, recommendation: str, confidence: str):
+    """Write one row to approval_audit. Non-fatal."""
+    if not pg_engine:
+        return
+    try:
+        with pg_engine.connect() as conn:
+            conn.execute(text("""
+                INSERT INTO approval_audit (thread_id, decision, ticker, recommendation, confidence)
+                VALUES (:tid, :decision, :ticker, :rec, :conf)
+                ON CONFLICT (thread_id) DO NOTHING
+            """), {
+                "tid": thread_id,
+                "decision": decision,
+                "ticker": ticker,
+                "rec": recommendation,
+                "conf": confidence,
+            })
+            conn.commit()
+            logger.info(f"Audit log written — thread_id={thread_id} decision={decision} ticker={ticker}")
+    except Exception as e:
+        logger.warning(f"Audit log write failed (non-fatal): {e}")
+
+
 # ── /approve/{thread_id} ──────────────────────────────────────────────────────
 
 @app.post("/approve/{thread_id}")
-async def approve(thread_id: str):
+async def approve(thread_id: str, _: None = Depends(verify_approver_key)):
     config = {"configurable": {"thread_id": thread_id}}
     logger.info(f"/approve — thread_id={thread_id}")
+
+    # Idempotency — reject double approve/reject
+    existing = _get_existing_decision(thread_id)
+    if existing == "approved":
+        raise HTTPException(status_code=409, detail=f"Thread {thread_id} already approved")
+    if existing == "rejected":
+        raise HTTPException(status_code=409, detail=f"Thread {thread_id} was rejected — cannot approve")
 
     try:
         # Resume past trade_gate — supervisor already ran in /analyze
@@ -293,6 +351,15 @@ async def approve(thread_id: str):
     supervisor_report = state.get("supervisor_report", {})
 
     logger.info(f"Trade gate approved for thread_id={thread_id} — recommendation={supervisor_report.get('recommendation') if supervisor_report else 'N/A'}")
+
+    # Write audit log — before trade so it's recorded even if trade fails
+    _write_audit_log(
+        thread_id=thread_id,
+        decision="approved",
+        ticker=ticker,
+        recommendation=supervisor_report.get("recommendation", "") if supervisor_report else "",
+        confidence=supervisor_report.get("confidence", "") if supervisor_report else "",
+    )
 
     # Record signal for evaluation — non-fatal
     if pg_engine and supervisor_report:
@@ -335,7 +402,55 @@ async def approve(thread_id: str):
     }
 
 
-# ── /evaluate ─────────────────────────────────────────────────────────────────
+# ── /reject/{thread_id} ───────────────────────────────────────────────────────
+
+@app.post("/reject/{thread_id}")
+async def reject(thread_id: str, _: None = Depends(verify_approver_key)):
+    """
+    Reject a pending analysis — records the decision and blocks future approval.
+    The graph state is NOT resumed — trade_gate is never passed.
+    """
+    logger.info(f"/reject — thread_id={thread_id}")
+
+    # Idempotency
+    existing = _get_existing_decision(thread_id)
+    if existing == "rejected":
+        return {"status": "already_rejected", "thread_id": thread_id}
+    if existing == "approved":
+        raise HTTPException(status_code=409, detail=f"Thread {thread_id} already approved — cannot reject")
+
+    # Get state to extract ticker/recommendation for audit log
+    config = {"configurable": {"thread_id": thread_id}}
+    ticker = "unknown"
+    recommendation = ""
+    confidence = ""
+    try:
+        state = graph.get_state(config).values
+        ticker = state.get("ticker", "unknown")
+        report = state.get("supervisor_report") or {}
+        recommendation = report.get("recommendation", "") if isinstance(report, dict) else ""
+        confidence = report.get("confidence", "") if isinstance(report, dict) else ""
+    except Exception as e:
+        logger.warning(f"Could not read state for rejection audit: {e}")
+
+    _write_audit_log(
+        thread_id=thread_id,
+        decision="rejected",
+        ticker=ticker,
+        recommendation=recommendation,
+        confidence=confidence,
+    )
+
+    return {
+        "status": "rejected",
+        "thread_id": thread_id,
+        "ticker": ticker,
+        "recommendation": recommendation,
+        "message": "Analysis rejected — no trade will be placed. Thread cannot be subsequently approved.",
+    }
+
+
+
 
 @app.get("/evaluate")
 async def evaluate():

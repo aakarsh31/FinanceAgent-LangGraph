@@ -23,4 +23,6 @@ dependencies = [
     "psycopg2-binary>=2.9.0",
     "apscheduler>=3.10.0",
     "feedparser>=6.0.0",
+    "langgraph-checkpoint-postgres>=3.1.0",
+    "psycopg[binary]>=3.3.4",
 ]

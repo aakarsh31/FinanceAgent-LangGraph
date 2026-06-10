@@ -1,5 +1,6 @@
 import uvicorn
 import sqlite3
+import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
@@ -40,11 +41,12 @@ graph = None
 pg_engine = None
 
 
-# ── Checkpoint helpers ────────────────────────────────────────────────────────
+# ── Checkpoint helpers (SQLite path only — scoped to local dev) ───────────────
 
 def init_meta_table(db_path="checkpoints.db"):
-    """Create our own tracking table if it doesn't exist yet."""
+    """Create tracking table and enable WAL mode for concurrent access."""
     with sqlite3.connect(db_path) as conn:
+        conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS checkpoint_meta (
                 thread_id  TEXT PRIMARY KEY,
@@ -54,16 +56,19 @@ def init_meta_table(db_path="checkpoints.db"):
 
 
 def record_thread(thread_id: str, db_path="checkpoints.db"):
-    """Record a thread_id with the current timestamp."""
-    with sqlite3.connect(db_path) as conn:
-        conn.execute("""
-            INSERT OR IGNORE INTO checkpoint_meta (thread_id, created_at)
-            VALUES (?, ?)
-        """, (thread_id, datetime.now(timezone.utc).isoformat()))
+    """Record a thread_id — SQLite only. No-op when using PostgresSaver."""
+    try:
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("""
+                INSERT OR IGNORE INTO checkpoint_meta (thread_id, created_at)
+                VALUES (?, ?)
+            """, (thread_id, datetime.now(timezone.utc).isoformat()))
+    except sqlite3.OperationalError:
+        pass  # Table doesn't exist — using PostgresSaver, nothing to record
 
 
 def cleanup_old_checkpoints(db_path="checkpoints.db", days=7):
-    """Delete checkpoints older than `days` days and reclaim disk space."""
+    """Delete checkpoints older than `days` days (SQLite path only)."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     try:
         with sqlite3.connect(db_path) as conn:
@@ -91,12 +96,10 @@ def cleanup_old_checkpoints(db_path="checkpoints.db", days=7):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global graph, pg_engine
-    init_meta_table()
-    cleanup_old_checkpoints()
+    database_url = os.getenv("DATABASE_URL")
 
     # Initialize Postgres — non-fatal if DATABASE_URL is not set
-    # (allows local dev without Postgres; agents fall back to live API)
-    if os.getenv("DATABASE_URL"):
+    if database_url:
         try:
             pg_engine = get_engine()
             init_db(pg_engine)
@@ -107,11 +110,43 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("DATABASE_URL not set — running without Postgres cache")
 
-    with SqliteSaver.from_conn_string("checkpoints.db") as checkpointer:
-        graph_builder = GraphBuilder(engine=pg_engine)
-        graph = graph_builder.setup_graph(checkpointer=checkpointer)
-        logger.info("Graph compiled with SqliteSaver checkpointer")
-        yield
+    # ── Checkpointer: Postgres in prod, SQLite in local dev ──────────────────
+    # PostgresSaver uses the existing Railway Postgres instance — checkpoints
+    # survive redeploys. SqliteSaver is the local-dev fallback (ephemeral disk
+    # is fine for development since no production approvals are at risk).
+    if database_url:
+        try:
+            from langgraph.checkpoint.postgres import PostgresSaver
+            # Use psycopg connection string format
+            conn_str = database_url.replace("postgresql://", "postgresql+psycopg://") if "postgresql+psycopg" not in database_url else database_url
+            # PostgresSaver needs plain psycopg format (not SQLAlchemy)
+            pg_conn_str = database_url
+            if pg_conn_str.startswith("postgresql+"):
+                pg_conn_str = "postgresql" + pg_conn_str[pg_conn_str.index("://"):]
+
+            with PostgresSaver.from_conn_string(pg_conn_str) as checkpointer:
+                checkpointer.setup()  # creates checkpoint tables if not exist
+                graph_builder = GraphBuilder(engine=pg_engine)
+                graph = graph_builder.setup_graph(checkpointer=checkpointer)
+                logger.info("Graph compiled with PostgresSaver checkpointer")
+                yield
+        except Exception as e:
+            logger.warning(f"PostgresSaver failed ({e}) — falling back to SqliteSaver")
+            init_meta_table()
+            cleanup_old_checkpoints()
+            with SqliteSaver.from_conn_string("checkpoints.db") as checkpointer:
+                graph_builder = GraphBuilder(engine=pg_engine)
+                graph = graph_builder.setup_graph(checkpointer=checkpointer)
+                logger.info("Graph compiled with SqliteSaver checkpointer (Postgres fallback)")
+                yield
+    else:
+        init_meta_table()
+        cleanup_old_checkpoints()
+        with SqliteSaver.from_conn_string("checkpoints.db?mode=wal") as checkpointer:
+            graph_builder = GraphBuilder(engine=pg_engine)
+            graph = graph_builder.setup_graph(checkpointer=checkpointer)
+            logger.info("Graph compiled with SqliteSaver checkpointer (local dev)")
+            yield
 
     if pg_engine:
         pg_engine.dispose()
@@ -186,9 +221,10 @@ async def analyze(request: Request):
     config = {"configurable": {"thread_id": thread_id}}
 
     try:
-        state = graph.invoke(
+        state = await asyncio.to_thread(
+            graph.invoke,
             {"ticker": ticker, "timeframe": timeframe},
-            config=config,
+            config,
         )
     except FinanceAgentError as e:
         logger.error(f"Pipeline failed for {ticker}: {e}", exc_info=True)
@@ -244,7 +280,7 @@ async def approve(thread_id: str):
 
     try:
         # Resume past trade_gate — supervisor already ran in /analyze
-        state = graph.invoke(None, config=config)
+        state = await asyncio.to_thread(graph.invoke, None, config)
     except FinanceAgentError as e:
         logger.error(f"Approval failed for {thread_id}: {e}", exc_info=True)
         raise HTTPException(status_code=400, detail=str(e))
@@ -276,7 +312,8 @@ async def approve(thread_id: str):
     # Execute paper trade — High confidence equity signals only, non-fatal
     trade_result = {"traded": False, "skipped_reason": "alpaca_not_configured", "order": None, "stop_loss": None, "error": None}
     if os.getenv("APCA_API_KEY_ID") and supervisor_report:
-        trade_result = maybe_execute_trade(
+        trade_result = await asyncio.to_thread(
+            maybe_execute_trade,
             ticker=ticker,
             asset_class=asset_class,
             supervisor_report=supervisor_report,

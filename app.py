@@ -14,8 +14,8 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from ingestion.db import get_engine, init_db
 from evaluation.db_eval import init_eval_db
 from evaluation.signal_store import record_signal
-from alpaca_broker.trade_executor import maybe_execute_trade
-from alpaca_broker.client import AlpacaClient, AlpacaError
+from alpaca.trade_executor import maybe_execute_trade
+from alpaca.client import AlpacaClient, AlpacaError
 
 import os
 from dotenv import load_dotenv
@@ -379,12 +379,36 @@ async def portfolio():
         total_pnl = round(account["equity"] - base_value, 2)
         total_pnl_pct = round((total_pnl / base_value) * 100, 2) if base_value > 0 else 0.0
 
-        # Win rate — filled orders only
+        # Win rate — computed from closed round trips only
+        # A win = a sell that closed at a higher price than the avg entry of preceding buys
+        # Open positions are excluded — unrealized P&L reported separately
         filled = [o for o in orders if o["status"] == "filled"]
-        wins = [
-            o for o in filled
-            if (o["side"] == "buy" and (o.get("filled_avg_price") or 0) > 0)
-        ]
+        buys  = [o for o in filled if o["side"] == "buy"  and o.get("filled_avg_price")]
+        sells = [o for o in filled if o["side"] == "sell" and o.get("filled_avg_price")]
+
+        # Build avg entry price per symbol from buy fills
+        entry_prices: dict[str, list[float]] = {}
+        for o in sorted(buys, key=lambda x: x.get("submitted_at") or ""):
+            sym = o["ticker"]
+            entry_prices.setdefault(sym, []).append(float(o["filled_avg_price"]))
+
+        # For each sell, compare against avg entry price of that symbol's buys
+        closed_trades = []
+        for o in sells:
+            sym = o["ticker"]
+            entries = entry_prices.get(sym)
+            if entries:
+                avg_entry = sum(entries) / len(entries)
+                exit_price = float(o["filled_avg_price"])
+                closed_trades.append({
+                    "ticker": sym,
+                    "avg_entry": round(avg_entry, 4),
+                    "exit_price": round(exit_price, 4),
+                    "is_win": exit_price > avg_entry,
+                })
+
+        wins = [t for t in closed_trades if t["is_win"]]
+        win_rate = round(len(wins) / len(closed_trades), 4) if closed_trades else None
 
         return {
             "status": "ok",
@@ -399,6 +423,8 @@ async def portfolio():
             "stats": {
                 "trades_placed": len(filled),
                 "open_positions": len(positions),
+                "closed_trades": len(closed_trades),
+                "win_rate": win_rate,  # None when no closed round trips yet
             },
         }
     except AlpacaError as e:

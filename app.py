@@ -145,6 +145,17 @@ async def serve_frontend():
     return FileResponse("frontend/index.html")
 
 
+@app.get("/api")
+async def api_info():
+    """API root — returns system info and disclaimer."""
+    return {
+        "name": "FinanceAgent-LangGraph",
+        "version": "1.0.0",
+        "disclaimer": "NOT INVESTMENT ADVICE. This is a research and educational system using paper trading only. Not registered under the Investment Advisers Act.",
+        "endpoints": ["/analyze", "/approve/{thread_id}", "/portfolio", "/orders", "/evaluate"],
+    }
+
+
 # ── /analyze ─────────────────────────────────────────────────────────────────
 
 @app.post("/analyze")

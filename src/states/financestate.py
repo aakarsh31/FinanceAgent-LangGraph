@@ -116,17 +116,21 @@ class BearThesis(BaseModel):
 class ValuationData(BaseModel):
     pe_vs_sector: Optional[str] = Field(
         default=None,
-        description="Qualitative comparison of the stock's P/E to its sector median e.g. 'Trading at 40% premium to sector median of 22x'"
+        description="Qualitative comparison of the stock's P/E to its sector median e.g. 'Trading at 40% premium to sector median of 22x' — for UI display only, not passed to supervisor"
     )
     intrinsic_value_estimate: Optional[str] = Field(
         default=None,
-        description="Rough intrinsic value range or fair value commentary based on available metrics e.g. 'Fair value estimated $140-$160 vs current $185'"
+        description="Rough intrinsic value range or fair value commentary e.g. 'Fair value estimated $140-$160 vs current $185' — for UI display only"
     )
     valuation_label: str = Field(
         description="Overall valuation judgment: 'Overvalued', 'Fairly Valued', or 'Undervalued'"
     )
+    qualitative_drivers: str = Field(
+        default="",
+        description="2-3 sentence qualitative explanation of the valuation verdict with NO raw numbers or ratios — e.g. 'Stock trades at a significant premium relative to sector peers, pricing in growth expectations that appear optimistic given current momentum. Limited margin of safety at current levels.'"
+    )
     valuation_summary: str = Field(
-        description="2-3 sentence narrative explaining the valuation assessment and what it means for the investment case"
+        description="2-3 sentence narrative with actual numbers for UI display — passed to supervisor only via qualitative_drivers"
     )
 
 
@@ -195,7 +199,7 @@ class SupervisorReport(BaseModel):
         description="Supervisor's overall confidence in the recommendation: 'High', 'Medium', or 'Low'"
     )
     key_metrics: list[str] = Field(
-        description="The most important metrics to monitor — include actual values e.g. ['P/E: 31.2', 'Beta: 1.4', 'CPI: 3.2%', 'Regime: Risk-Off']"
+        description="The most important metrics to monitor — use qualitative labels for valuation, actual values for macro/risk. e.g. ['Earnings: Profitable ($8.26 EPS)', 'Revenue: Healthy growth (17%)', 'Valuation: Overvalued', 'Beta: 1.4', 'CPI: 3.2%', 'Regime: Risk-Off']"
     )
     analyst_agreement: str = Field(
         description="Whether the pipeline recommendation agrees with Wall Street consensus e.g. 'Agreed — both recommend Hold' or 'Disagreed — pipeline says Buy, analysts say Sell'"

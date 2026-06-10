@@ -89,10 +89,11 @@ Mean Analyst Price Target: {target_price} USD
 Regime: {regime_label} | Fed Funds Rate: {fed_funds_rate}% | Yield Curve: {yield_curve_spread}
 
 Your output:
-- pe_vs_sector: One precise sentence with actual numbers. Example: "Trading at 28x vs sector median of 18x — a 56% premium requiring 20%+ growth to justify."
-- intrinsic_value_estimate: One sentence using price target and 52-week range. Example: "Analyst consensus target of $185 implies 12% upside from current $165, with support at 52-week low of $142."
+- pe_vs_sector: One precise sentence with actual numbers. Example: "Trading at 28x vs sector median of 18x — a 56% premium requiring 20%+ growth to justify." (For UI display only.)
+- intrinsic_value_estimate: One sentence using price target and 52-week range. Example: "Analyst consensus target of $185 implies 12% upside from current $165." (For UI display only.)
 - valuation_label: EXACTLY one of 'Overvalued', 'Fairly Valued', or 'Undervalued'
-- valuation_summary: 2-3 sentences explaining which steps drove the label and what the risk/reward looks like from current levels.
+- qualitative_drivers: 2-3 sentences explaining the verdict using NO raw numbers or ratios — qualitative language only. This is what other agents will read. Example: "Stock trades at a significant premium relative to sector peers, pricing in optimistic growth expectations that appear stretched given current momentum. Limited margin of safety at current levels given the macro backdrop."
+- valuation_summary: 2-3 sentences with actual numbers for the full report. Example: "At 35x earnings versus a sector median of 25x, AAPL commands a 40% premium that requires sustained double-digit growth to justify."
 """
 
 

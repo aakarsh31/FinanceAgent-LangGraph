@@ -34,6 +34,14 @@ SUPERVISOR_PROMPT_EQUITY = """You are the Portfolio Manager at an elite investme
 Your team has submitted their research on {ticker}. Your job is to synthesise all inputs into a DECISIVE investment memo.
 You are accountable for this recommendation. Waffling into Hold when the data is clear is a failure of analysis.
 
+CRITICAL DATA BOUNDARY — READ FIRST:
+You have NOT been given P/E ratio data, sector median P/E, or PEG ratio data.
+Do NOT invent, recall, or estimate any P/E ratio, sector multiple, or sector comparison.
+Do NOT write phrases like "35x P/E", "1400% premium over sector", "sector median = 2.34x", or any variant.
+The ValuationAnalyst's label (Overvalued/Fairly Valued/Undervalued) is the ONLY valuation signal you have.
+Use it. Do not re-derive it. Do not support it with invented numbers.
+Violation of this rule produces hallucinated analysis that undermines every other signal.
+
 DECISION FRAMEWORK — apply this before writing:
 
 STEP 1 — Read the bear vs bull confidence:
@@ -42,12 +50,12 @@ STEP 1 — Read the bear vs bull confidence:
 - Both High or both Medium = read valuation and sentiment to break tie
 
 TIEBREAKER when Bear High AND Bull High simultaneously:
-- Overvalued + revenue_growth < 10% → Sell (overpriced with weak growth)
-- Overvalued + revenue_growth 10-20% → Hold (premium partially justified)
-- Overvalued + revenue_growth > 20% → Hold (growth justifies some premium, but stretched)
+- Overvalued + revenue stagnant/declining → Sell (overpriced with weak growth)
+- Overvalued + revenue modest growth → Hold (premium partially justified)
+- Overvalued + revenue high growth → Hold (growth justifies some premium, but stretched)
 - Fairly Valued + any growth → Hold
-- Undervalued + revenue_growth > 20% → Buy (cheap with strong growth)
-- Undervalued + revenue_growth < 0% → Hold (cheap for a reason)
+- Undervalued + revenue high growth → Buy (cheap with strong growth)
+- Undervalued + revenue declining → Hold (cheap for a reason)
 Apply this tiebreaker BEFORE checking other steps when both confidences are High.
 
 STEP 2 — Apply valuation overlay:
@@ -66,12 +74,11 @@ STEP 4 — Apply sentiment signal:
 - Sentiment score > 0.5 AND bull confidence High = Buy unless Overvalued
 
 EXPLICIT SELL CONDITIONS (any ONE is sufficient):
-✓ EPS negative (company losing money) + P/E above 30x → automatic Sell regardless of other signals
 ✓ Bear confidence High + valuation Overvalued + sentiment bearish
-✓ Revenue growth negative + P/E above sector by >30% + sentiment bearish
+✓ Revenue trend declining + valuation Overvalued + sentiment bearish
 ✓ Risk-Off Tightening or Stagflation regime + bear confidence High + sentiment bearish
 ✓ Analyst consensus Sell + bear confidence High + negative sentiment
-✓ Tiebreaker (Bear High AND Bull High) + Fairly Valued + revenue_growth < 5% + sentiment bearish → Sell
+✓ Tiebreaker (Bear High AND Bull High) + Fairly Valued + revenue trend stagnant/declining + sentiment bearish
 
 EXPLICIT BUY CONDITIONS (any ONE is sufficient):
 ✓ Bull confidence High + valuation Undervalued/Fair + macro Risk-On
@@ -87,12 +94,11 @@ Regime: {regime_label}
 Fed Funds: {fed_funds_rate}% | CPI: {cpi_yoy}% | Yield Curve: {yield_curve_spread} pts
 Summary: {regime_summary}
 
---- FUNDAMENTALS ---
-P/E: {pe_ratio} | EPS: {eps} | Revenue Growth: {revenue_growth} | D/E: {debt_to_equity}
+--- FUNDAMENTALS (qualitative) ---
+Earnings: {earnings_health} | Revenue: {revenue_trend} | Leverage: {leverage_level}
 
 --- VALUATION ---
-Label: {valuation_label} | P/E vs Sector: {pe_vs_sector}
-Intrinsic Value: {intrinsic_value} | Summary: {valuation_summary}
+Label: {valuation_label} | Qualitative Assessment: {valuation_drivers}
 
 --- BULL CASE ---
 Confidence: {bull_confidence}
@@ -122,7 +128,7 @@ Your output:
 - bear_case: 2-3 sentences — the strongest bear arguments with the actual metrics.
 - recommendation: EXACTLY one of 'Buy', 'Hold', or 'Sell' — based on the decision framework above
 - confidence: 'High' if 3+ signals align, 'Medium' if majority align, 'Low' if genuinely mixed
-- key_metrics: list of 6-8 metrics. Include the actual numbers. Example: ['P/E: 31.2', 'Revenue Growth: -4.2%', 'Regime: Risk-Off Tightening', 'Bear Confidence: High', 'Valuation: Overvalued', 'Sentiment: -0.65 (Bearish)']
+- key_metrics: list of 6-8 metrics. Include actual values where available. Example: ['Earnings: Profitable ($8.26 EPS)', 'Revenue: Healthy growth (17%)', 'Regime: Risk-Off Tightening', 'Bear Confidence: High', 'Valuation: Overvalued', 'Sentiment: -0.65 (Bearish)', 'Volatility: 23.6%', 'Beta: 1.09']
 - analyst_agreement: one sentence comparing your call to Wall Street consensus and explaining any divergence
 """
 
@@ -287,17 +293,44 @@ class SupervisorAgent:
             bear = _w(state.get("bear_thesis"))
             valuation = _w(state.get("valuation"))
 
+            # Convert raw numbers → qualitative buckets (same as bull/bear analysts)
+            # Supervisor never sees raw P/E, EPS, or D/E — only qualitative labels
+            def _earnings_health(eps) -> str:
+                if eps is None: return "unavailable"
+                eps = float(eps)
+                if eps > 10: return f"Strongly profitable (${eps:.2f} EPS)"
+                if eps > 3:  return f"Profitable (${eps:.2f} EPS)"
+                if eps > 0:  return f"Marginally profitable (${eps:.2f} EPS)"
+                if eps == 0: return "Break-even"
+                return f"Unprofitable (${eps:.2f} EPS)"
+
+            def _revenue_trend(g) -> str:
+                if g is None: return "unavailable"
+                g = float(g) * 100
+                if g > 25:  return f"High growth ({g:.0f}% YoY)"
+                if g > 10:  return f"Healthy growth ({g:.0f}% YoY)"
+                if g > 3:   return f"Modest growth ({g:.0f}% YoY)"
+                if g >= 0:  return f"Stagnant ({g:.0f}% YoY)"
+                if g > -10: return f"Declining ({g:.0f}% YoY)"
+                return f"Significant decline ({g:.0f}% YoY)"
+
+            def _leverage_level(de) -> str:
+                if de is None: return "unavailable"
+                de = float(de)
+                if de < 0:   return "Negative equity"
+                if de < 0.3: return f"Low leverage ({de:.1f}x D/E)"
+                if de < 0.8: return f"Moderate leverage ({de:.1f}x D/E)"
+                if de < 2.0: return f"Elevated leverage ({de:.1f}x D/E)"
+                return f"High leverage ({de:.1f}x D/E)"
+
             prompt = SUPERVISOR_PROMPT_EQUITY.format(
                 **shared,
                 supervisor_equity_reference=SUPERVISOR_EQUITY_REFERENCE,
-                pe_ratio=fmt(fundamentals.PE_ratio if fundamentals else None),
-                eps=fmt(fundamentals.EPS if fundamentals else None, suffix=" USD"),
-                revenue_growth=fmt(fundamentals.revenue_growth if fundamentals else None),
-                debt_to_equity=fmt(fundamentals.debt_to_equity if fundamentals else None),
+                earnings_health=_earnings_health(fundamentals.EPS if fundamentals else None),
+                revenue_trend=_revenue_trend(fundamentals.revenue_growth if fundamentals else None),
+                leverage_level=_leverage_level(fundamentals.debt_to_equity if fundamentals else None),
                 valuation_label=fmt(valuation.valuation_label if valuation else None),
-                pe_vs_sector=fmt(valuation.pe_vs_sector if valuation else None),
-                intrinsic_value=fmt(valuation.intrinsic_value_estimate if valuation else None),
-                valuation_summary=fmt(valuation.valuation_summary if valuation else None),
+                valuation_drivers=fmt(valuation.qualitative_drivers if valuation else None),
                 bull_confidence=fmt(bull.confidence if bull else None),
                 bull_thesis=fmt(bull.thesis if bull else None),
                 bull_catalysts=fmt_list(bull.key_catalysts if bull else []),

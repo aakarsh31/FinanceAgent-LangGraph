@@ -14,8 +14,8 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from ingestion.db import get_engine, init_db
 from evaluation.db_eval import init_eval_db
 from evaluation.signal_store import record_signal
-from alpaca.trade_executor import maybe_execute_trade
-from alpaca.client import AlpacaClient, AlpacaError
+from alpaca_broker.trade_executor import maybe_execute_trade
+from alpaca_broker.client import AlpacaClient, AlpacaError
 
 import os
 from dotenv import load_dotenv

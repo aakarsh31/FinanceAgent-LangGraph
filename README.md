@@ -255,7 +255,7 @@ cd frontend-react && npm install && npm run dev
 
 **Supervisor pattern over shared state** — each specialist agent has a distinct role and writes one output to state. The SupervisorAgent reads all outputs and makes the final call — it never touches raw data directly, mirroring how a portfolio manager reads analyst memos rather than Bloomberg terminals.
 
-**HITL at the trade gate, not the supervisor** — the full pipeline including the Supervisor runs on `/analyze` so the user sees the recommendation before deciding. The interrupt fires at `trade_gate` after synthesis — the human reviews the complete memo and approves trade execution, not blind agent outputs. This is the architecturally correct HITL placement for a compliance gate.
+**HITL at the trade gate, not the supervisor** — the full pipeline including the Supervisor runs on `/analyze` so the user sees the recommendation before deciding. The interrupt fires at `trade_gate` after synthesis — the human reviews the complete memo and approves trade execution, not blind agent outputs. This is the architecturally correct HITL placement for a compliance gate. A `/reject` endpoint is also available — a gate with only "yes" is a confirmation dialog, not a gate.
 
 **Qualitative data isolation for bull/bear analysts** — raw P/E, EPS, and D/E ratios are converted to qualitative buckets in Python before reaching the LLM. This eliminates hallucinated sector comparisons (e.g. "sector median = 2.47x") caused by LLM pattern-matching on numeric inputs from training data.
 

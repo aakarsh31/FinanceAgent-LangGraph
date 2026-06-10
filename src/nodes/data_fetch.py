@@ -1,20 +1,15 @@
 """
-src/nodes/data_fetch.py — DataFetchAgent (Day 6 rewrite)
+src/nodes/data_fetch.py — DataFetchAgent
 
-What changed from Day 5:
-- Fundamentals: yfinance .info → Postgres processed_fundamentals (FMP-sourced)
-- News headlines: yfinance .news scraper → Postgres processed_news (Finnhub-sourced)
-- Macro: live FRED on every request → Postgres processed_macro (6h TTL)
-- Price/OHLCV: still yfinance — reliable for this use case, no replacement needed
-- Every data source now carries a DataFreshness annotation injected into state
-  so downstream agents know the age and provenance of what they're reasoning over
+Fetches all data required by downstream agents with a Postgres cache layer
+and live API fallback chain per data type.
 
 Fallback chain (per data type):
   1. Check data_freshness_meta — is it fresh?
   2. Yes → query processed table → inject data_age annotation
   3. No / missing → live API fallback → log cache miss → inject "live fallback" annotation
 
-The state key "data_provenance" is new — a dict of source annotations
+The state key "data_provenance" carries source annotations
 that SupervisorAgent can surface in the final report.
 """
 
@@ -425,7 +420,7 @@ class DataFetchAgent:
         return fred_data, fallback_freshness
 
     def _fetch_fred_live(self) -> dict | None:
-        """Live FRED fetch — identical to Day 5 implementation."""
+        """Live FRED fetch — fallback when Postgres cache is stale or missing."""
         try:
             from fredapi import Fred
             api_key = os.getenv("FRED_API_KEY")

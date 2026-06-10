@@ -23,6 +23,7 @@ from src.nodes.macro_regime_agent import MacroRegimeAgent
 from src.nodes.fundamentals_agent import FundamentalsAgent
 from src.nodes.sentiment_agent import SentimentAgent
 from src.nodes.risk_agent import RiskDataAgent
+from src.nodes.technical_analyst import TechnicalAnalyst
 from src.nodes.bull_analyst import BullAnalyst
 from src.nodes.bear_analyst import BearAnalyst
 from src.nodes.valuation_analyst import ValuationAnalyst
@@ -34,12 +35,15 @@ load_dotenv()
 TICKERS = ["AAPL", "MSFT", "NVDA", "GOOGL", "META"]
 TIMEFRAME = "3mo"
 
+# 10 specialist agents + data_fetch as infrastructure node
+# trade_gate is excluded — it's a pure HITL checkpoint, zero compute
 AGENTS_IN_ORDER = [
     "data_fetch",
     "macro_regime_agent",
     "fundamentals_agent",
     "sentiment_agent",
     "risk_agent",
+    "technical_analyst",
     "bull_analyst",
     "bear_analyst",
     "valuation_analyst",
@@ -80,16 +84,17 @@ def build_instrumented_graph():
     fast_llm = llm_client.get_llm("fast")
     smart_llm = llm_client.get_llm("smart")
 
-    data_fetch = DataFetchAgent()
-    macro = MacroRegimeAgent(fast_llm)
+    data_fetch  = DataFetchAgent()
+    macro       = MacroRegimeAgent(fast_llm)
     fundamentals = FundamentalsAgent(fast_llm)
-    sentiment = SentimentAgent(fast_llm)
-    risk = RiskDataAgent(fast_llm)
-    bull = BullAnalyst(fast_llm)
-    bear = BearAnalyst(fast_llm)
-    valuation = ValuationAnalyst(fast_llm)
-    onchain = OnChainAnalyst(fast_llm)
-    supervisor = SupervisorAgent(smart_llm)
+    sentiment   = SentimentAgent(fast_llm)
+    risk        = RiskDataAgent(fast_llm)
+    technical   = TechnicalAnalyst(fast_llm)
+    bull        = BullAnalyst(fast_llm)
+    bear        = BearAnalyst(fast_llm)
+    valuation   = ValuationAnalyst(fast_llm)
+    onchain     = OnChainAnalyst(fast_llm)
+    supervisor  = SupervisorAgent(smart_llm)
 
     graph = StateGraph(FinanceState)
 
@@ -98,6 +103,7 @@ def build_instrumented_graph():
     graph.add_node("fundamentals_agent", timed("fundamentals_agent", fundamentals.analyze))
     graph.add_node("sentiment_agent",    timed("sentiment_agent",    sentiment.analyze))
     graph.add_node("risk_agent",         timed("risk_agent",         risk.analyze))
+    graph.add_node("technical_analyst",  timed("technical_analyst",  technical.analyze))
     graph.add_node("bull_analyst",       timed("bull_analyst",       bull.analyze))
     graph.add_node("bear_analyst",       timed("bear_analyst",       bear.analyze))
     graph.add_node("valuation_analyst",  timed("valuation_analyst",  valuation.analyze))
@@ -108,20 +114,21 @@ def build_instrumented_graph():
     graph.add_edge("data_fetch", "macro_regime_agent")
     graph.add_conditional_edges("macro_regime_agent", route_by_asset_class)
 
-    graph.add_edge("fundamentals_agent", "bull_analyst")
-    graph.add_edge("fundamentals_agent", "bear_analyst")
-    graph.add_edge("fundamentals_agent", "valuation_analyst")
-    graph.add_edge("sentiment_agent",    "bull_analyst")
-    graph.add_edge("sentiment_agent",    "bear_analyst")
-    graph.add_edge("sentiment_agent",    "valuation_analyst")
-    graph.add_edge("risk_agent",         "bull_analyst")
-    graph.add_edge("risk_agent",         "bear_analyst")
-    graph.add_edge("risk_agent",         "valuation_analyst")
+    # Wave 1 → Wave 2 (equity)
+    graph.add_edge("fundamentals_agent",  "bull_analyst")
+    graph.add_edge("fundamentals_agent",  "bear_analyst")
+    graph.add_edge("fundamentals_agent",  "valuation_analyst")
+    graph.add_edge("sentiment_agent",     "bull_analyst")
+    graph.add_edge("sentiment_agent",     "bear_analyst")
+    graph.add_edge("risk_agent",          "bull_analyst")
+    graph.add_edge("risk_agent",          "bear_analyst")
+    graph.add_edge("technical_analyst",   "bull_analyst")
+    graph.add_edge("technical_analyst",   "bear_analyst")
 
-    graph.add_edge("bull_analyst",      "supervisor_agent")
-    graph.add_edge("bear_analyst",      "supervisor_agent")
-    graph.add_edge("valuation_analyst", "supervisor_agent")
-    graph.add_edge("onchain_analyst",   "supervisor_agent")
+    graph.add_edge("bull_analyst",        "supervisor_agent")
+    graph.add_edge("bear_analyst",        "supervisor_agent")
+    graph.add_edge("valuation_analyst",   "supervisor_agent")
+    graph.add_edge("onchain_analyst",     "supervisor_agent")
 
     graph.add_edge("supervisor_agent", END)
 

@@ -1,13 +1,15 @@
 import uvicorn
 import sqlite3
+import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, Header, Depends
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 
+from sqlalchemy import text
 from src.graphs.graph_builder import GraphBuilder
 from src.exceptions import FinanceAgentError
 from langgraph.checkpoint.sqlite import SqliteSaver
@@ -40,11 +42,12 @@ graph = None
 pg_engine = None
 
 
-# ── Checkpoint helpers ────────────────────────────────────────────────────────
+# ── Checkpoint helpers (SQLite path only — scoped to local dev) ───────────────
 
 def init_meta_table(db_path="checkpoints.db"):
-    """Create our own tracking table if it doesn't exist yet."""
+    """Create tracking table and enable WAL mode for concurrent access."""
     with sqlite3.connect(db_path) as conn:
+        conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS checkpoint_meta (
                 thread_id  TEXT PRIMARY KEY,
@@ -54,16 +57,19 @@ def init_meta_table(db_path="checkpoints.db"):
 
 
 def record_thread(thread_id: str, db_path="checkpoints.db"):
-    """Record a thread_id with the current timestamp."""
-    with sqlite3.connect(db_path) as conn:
-        conn.execute("""
-            INSERT OR IGNORE INTO checkpoint_meta (thread_id, created_at)
-            VALUES (?, ?)
-        """, (thread_id, datetime.now(timezone.utc).isoformat()))
+    """Record a thread_id — SQLite only. No-op when using PostgresSaver."""
+    try:
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("""
+                INSERT OR IGNORE INTO checkpoint_meta (thread_id, created_at)
+                VALUES (?, ?)
+            """, (thread_id, datetime.now(timezone.utc).isoformat()))
+    except sqlite3.OperationalError:
+        pass  # Table doesn't exist — using PostgresSaver, nothing to record
 
 
 def cleanup_old_checkpoints(db_path="checkpoints.db", days=7):
-    """Delete checkpoints older than `days` days and reclaim disk space."""
+    """Delete checkpoints older than `days` days (SQLite path only)."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     try:
         with sqlite3.connect(db_path) as conn:
@@ -91,12 +97,10 @@ def cleanup_old_checkpoints(db_path="checkpoints.db", days=7):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global graph, pg_engine
-    init_meta_table()
-    cleanup_old_checkpoints()
+    database_url = os.getenv("DATABASE_URL")
 
     # Initialize Postgres — non-fatal if DATABASE_URL is not set
-    # (allows local dev without Postgres; agents fall back to live API)
-    if os.getenv("DATABASE_URL"):
+    if database_url:
         try:
             pg_engine = get_engine()
             init_db(pg_engine)
@@ -107,11 +111,43 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("DATABASE_URL not set — running without Postgres cache")
 
-    with SqliteSaver.from_conn_string("checkpoints.db") as checkpointer:
-        graph_builder = GraphBuilder(engine=pg_engine)
-        graph = graph_builder.setup_graph(checkpointer=checkpointer)
-        logger.info("Graph compiled with SqliteSaver checkpointer")
-        yield
+    # ── Checkpointer: Postgres in prod, SQLite in local dev ──────────────────
+    # PostgresSaver uses the existing Railway Postgres instance — checkpoints
+    # survive redeploys. SqliteSaver is the local-dev fallback (ephemeral disk
+    # is fine for development since no production approvals are at risk).
+    if database_url:
+        try:
+            from langgraph.checkpoint.postgres import PostgresSaver
+            # Use psycopg connection string format
+            conn_str = database_url.replace("postgresql://", "postgresql+psycopg://") if "postgresql+psycopg" not in database_url else database_url
+            # PostgresSaver needs plain psycopg format (not SQLAlchemy)
+            pg_conn_str = database_url
+            if pg_conn_str.startswith("postgresql+"):
+                pg_conn_str = "postgresql" + pg_conn_str[pg_conn_str.index("://"):]
+
+            with PostgresSaver.from_conn_string(pg_conn_str) as checkpointer:
+                checkpointer.setup()  # creates checkpoint tables if not exist
+                graph_builder = GraphBuilder(engine=pg_engine)
+                graph = graph_builder.setup_graph(checkpointer=checkpointer)
+                logger.info("Graph compiled with PostgresSaver checkpointer")
+                yield
+        except Exception as e:
+            logger.warning(f"PostgresSaver failed ({e}) — falling back to SqliteSaver")
+            init_meta_table()
+            cleanup_old_checkpoints()
+            with SqliteSaver.from_conn_string("checkpoints.db") as checkpointer:
+                graph_builder = GraphBuilder(engine=pg_engine)
+                graph = graph_builder.setup_graph(checkpointer=checkpointer)
+                logger.info("Graph compiled with SqliteSaver checkpointer (Postgres fallback)")
+                yield
+    else:
+        init_meta_table()
+        cleanup_old_checkpoints()
+        with SqliteSaver.from_conn_string("checkpoints.db?mode=wal") as checkpointer:
+            graph_builder = GraphBuilder(engine=pg_engine)
+            graph = graph_builder.setup_graph(checkpointer=checkpointer)
+            logger.info("Graph compiled with SqliteSaver checkpointer (local dev)")
+            yield
 
     if pg_engine:
         pg_engine.dispose()
@@ -145,6 +181,17 @@ async def serve_frontend():
     return FileResponse("frontend/index.html")
 
 
+@app.get("/api")
+async def api_info():
+    """API root — returns system info and disclaimer."""
+    return {
+        "name": "FinanceAgent-LangGraph",
+        "version": "1.0.0",
+        "disclaimer": "NOT INVESTMENT ADVICE. This is a research and educational system using paper trading only. Not registered under the Investment Advisers Act.",
+        "endpoints": ["/analyze", "/approve/{thread_id}", "/portfolio", "/orders", "/evaluate"],
+    }
+
+
 # ── /analyze ─────────────────────────────────────────────────────────────────
 
 @app.post("/analyze")
@@ -175,9 +222,10 @@ async def analyze(request: Request):
     config = {"configurable": {"thread_id": thread_id}}
 
     try:
-        state = graph.invoke(
+        state = await asyncio.to_thread(
+            graph.invoke,
             {"ticker": ticker, "timeframe": timeframe},
-            config=config,
+            config,
         )
     except FinanceAgentError as e:
         logger.error(f"Pipeline failed for {ticker}: {e}", exc_info=True)
@@ -224,16 +272,73 @@ async def analyze(request: Request):
     }
 
 
+# ── HITL auth + audit ────────────────────────────────────────────────────────
+
+def verify_approver_key(x_api_key: str = Header(default=None)):
+    """
+    Require X-API-Key header matching APPROVER_API_KEY env var.
+    If APPROVER_API_KEY is not set, auth is disabled (dev mode).
+    """
+    required_key = os.getenv("APPROVER_API_KEY")
+    if required_key and x_api_key != required_key:
+        raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key")
+
+
+def _get_existing_decision(thread_id: str) -> str | None:
+    """Return existing decision for thread_id from audit log, or None."""
+    if not pg_engine:
+        return None
+    try:
+        with pg_engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT decision FROM approval_audit WHERE thread_id = :tid"),
+                {"tid": thread_id}
+            ).fetchone()
+            return row[0] if row else None
+    except Exception:
+        return None
+
+
+def _write_audit_log(thread_id: str, decision: str, ticker: str, recommendation: str, confidence: str):
+    """Write one row to approval_audit. Non-fatal."""
+    if not pg_engine:
+        return
+    try:
+        with pg_engine.connect() as conn:
+            conn.execute(text("""
+                INSERT INTO approval_audit (thread_id, decision, ticker, recommendation, confidence)
+                VALUES (:tid, :decision, :ticker, :rec, :conf)
+                ON CONFLICT (thread_id) DO NOTHING
+            """), {
+                "tid": thread_id,
+                "decision": decision,
+                "ticker": ticker,
+                "rec": recommendation,
+                "conf": confidence,
+            })
+            conn.commit()
+            logger.info(f"Audit log written — thread_id={thread_id} decision={decision} ticker={ticker}")
+    except Exception as e:
+        logger.warning(f"Audit log write failed (non-fatal): {e}")
+
+
 # ── /approve/{thread_id} ──────────────────────────────────────────────────────
 
 @app.post("/approve/{thread_id}")
-async def approve(thread_id: str):
+async def approve(thread_id: str, _: None = Depends(verify_approver_key)):
     config = {"configurable": {"thread_id": thread_id}}
     logger.info(f"/approve — thread_id={thread_id}")
 
+    # Idempotency — reject double approve/reject
+    existing = _get_existing_decision(thread_id)
+    if existing == "approved":
+        raise HTTPException(status_code=409, detail=f"Thread {thread_id} already approved")
+    if existing == "rejected":
+        raise HTTPException(status_code=409, detail=f"Thread {thread_id} was rejected — cannot approve")
+
     try:
         # Resume past trade_gate — supervisor already ran in /analyze
-        state = graph.invoke(None, config=config)
+        state = await asyncio.to_thread(graph.invoke, None, config)
     except FinanceAgentError as e:
         logger.error(f"Approval failed for {thread_id}: {e}", exc_info=True)
         raise HTTPException(status_code=400, detail=str(e))
@@ -246,6 +351,15 @@ async def approve(thread_id: str):
     supervisor_report = state.get("supervisor_report", {})
 
     logger.info(f"Trade gate approved for thread_id={thread_id} — recommendation={supervisor_report.get('recommendation') if supervisor_report else 'N/A'}")
+
+    # Write audit log — before trade so it's recorded even if trade fails
+    _write_audit_log(
+        thread_id=thread_id,
+        decision="approved",
+        ticker=ticker,
+        recommendation=supervisor_report.get("recommendation", "") if supervisor_report else "",
+        confidence=supervisor_report.get("confidence", "") if supervisor_report else "",
+    )
 
     # Record signal for evaluation — non-fatal
     if pg_engine and supervisor_report:
@@ -265,7 +379,8 @@ async def approve(thread_id: str):
     # Execute paper trade — High confidence equity signals only, non-fatal
     trade_result = {"traded": False, "skipped_reason": "alpaca_not_configured", "order": None, "stop_loss": None, "error": None}
     if os.getenv("APCA_API_KEY_ID") and supervisor_report:
-        trade_result = maybe_execute_trade(
+        trade_result = await asyncio.to_thread(
+            maybe_execute_trade,
             ticker=ticker,
             asset_class=asset_class,
             supervisor_report=supervisor_report,
@@ -287,7 +402,55 @@ async def approve(thread_id: str):
     }
 
 
-# ── /evaluate ─────────────────────────────────────────────────────────────────
+# ── /reject/{thread_id} ───────────────────────────────────────────────────────
+
+@app.post("/reject/{thread_id}")
+async def reject(thread_id: str, _: None = Depends(verify_approver_key)):
+    """
+    Reject a pending analysis — records the decision and blocks future approval.
+    The graph state is NOT resumed — trade_gate is never passed.
+    """
+    logger.info(f"/reject — thread_id={thread_id}")
+
+    # Idempotency
+    existing = _get_existing_decision(thread_id)
+    if existing == "rejected":
+        return {"status": "already_rejected", "thread_id": thread_id}
+    if existing == "approved":
+        raise HTTPException(status_code=409, detail=f"Thread {thread_id} already approved — cannot reject")
+
+    # Get state to extract ticker/recommendation for audit log
+    config = {"configurable": {"thread_id": thread_id}}
+    ticker = "unknown"
+    recommendation = ""
+    confidence = ""
+    try:
+        state = graph.get_state(config).values
+        ticker = state.get("ticker", "unknown")
+        report = state.get("supervisor_report") or {}
+        recommendation = report.get("recommendation", "") if isinstance(report, dict) else ""
+        confidence = report.get("confidence", "") if isinstance(report, dict) else ""
+    except Exception as e:
+        logger.warning(f"Could not read state for rejection audit: {e}")
+
+    _write_audit_log(
+        thread_id=thread_id,
+        decision="rejected",
+        ticker=ticker,
+        recommendation=recommendation,
+        confidence=confidence,
+    )
+
+    return {
+        "status": "rejected",
+        "thread_id": thread_id,
+        "ticker": ticker,
+        "recommendation": recommendation,
+        "message": "Analysis rejected — no trade will be placed. Thread cannot be subsequently approved.",
+    }
+
+
+
 
 @app.get("/evaluate")
 async def evaluate():
@@ -379,12 +542,36 @@ async def portfolio():
         total_pnl = round(account["equity"] - base_value, 2)
         total_pnl_pct = round((total_pnl / base_value) * 100, 2) if base_value > 0 else 0.0
 
-        # Win rate — filled orders only
+        # Win rate — computed from closed round trips only
+        # A win = a sell that closed at a higher price than the avg entry of preceding buys
+        # Open positions are excluded — unrealized P&L reported separately
         filled = [o for o in orders if o["status"] == "filled"]
-        wins = [
-            o for o in filled
-            if (o["side"] == "buy" and (o.get("filled_avg_price") or 0) > 0)
-        ]
+        buys  = [o for o in filled if o["side"] == "buy"  and o.get("filled_avg_price")]
+        sells = [o for o in filled if o["side"] == "sell" and o.get("filled_avg_price")]
+
+        # Build avg entry price per symbol from buy fills
+        entry_prices: dict[str, list[float]] = {}
+        for o in sorted(buys, key=lambda x: x.get("submitted_at") or ""):
+            sym = o["ticker"]
+            entry_prices.setdefault(sym, []).append(float(o["filled_avg_price"]))
+
+        # For each sell, compare against avg entry price of that symbol's buys
+        closed_trades = []
+        for o in sells:
+            sym = o["ticker"]
+            entries = entry_prices.get(sym)
+            if entries:
+                avg_entry = sum(entries) / len(entries)
+                exit_price = float(o["filled_avg_price"])
+                closed_trades.append({
+                    "ticker": sym,
+                    "avg_entry": round(avg_entry, 4),
+                    "exit_price": round(exit_price, 4),
+                    "is_win": exit_price > avg_entry,
+                })
+
+        wins = [t for t in closed_trades if t["is_win"]]
+        win_rate = round(len(wins) / len(closed_trades), 4) if closed_trades else None
 
         return {
             "status": "ok",
@@ -399,6 +586,8 @@ async def portfolio():
             "stats": {
                 "trades_placed": len(filled),
                 "open_positions": len(positions),
+                "closed_trades": len(closed_trades),
+                "win_rate": win_rate,  # None when no closed round trips yet
             },
         }
     except AlpacaError as e:

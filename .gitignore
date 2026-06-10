@@ -9,7 +9,11 @@ wheels/
 # Virtual environments
 .venv
 
-#environment variables
+# Environment variables
 .env
 
+# LangGraph runtime state — never commit these
 checkpoints.db
+checkpoints.db-shm
+checkpoints.db-wal
+.langgraph_api/

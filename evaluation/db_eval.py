@@ -10,10 +10,9 @@ Design decisions:
   Filled in 30 days later by the eval job.
 - eval_runs is the aggregated summary — one row per eval job execution.
   This is what surfaces on the dashboard as hit rate.
-- model_version is a first-class field — when TechnicalAgent is added on Day 8,
-  signals get tagged "day8-technicalagent". You can compare hit rates across versions.
-- spy_return_30d stored on every signal — free to compute, pays dividends later
-  when alpha calculation is needed for Day 9 position sizing.
+- model_version is a first-class field — signals get tagged by version string
+  so hit rates can be compared across model versions.
+- spy_return_30d stored on every signal for alpha calculation.
 """
 
 from sqlalchemy import (

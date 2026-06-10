@@ -1,7 +1,7 @@
 [project]
-name = "multiagent"
+name = "finance-agent"
 version = "0.1.0"
-description = "Add your description here"
+description = "Multi-agent investment research platform with HITL trade gating and 30-day outcome evaluation."
 readme = "README.md"
 requires-python = "==3.11.*"
 dependencies = [
@@ -23,6 +23,4 @@ dependencies = [
     "psycopg2-binary>=2.9.0",
     "apscheduler>=3.10.0",
     "feedparser>=6.0.0",
-    "alpaca-py>=0.43.4",
-    "ta>=0.11.0",
 ]

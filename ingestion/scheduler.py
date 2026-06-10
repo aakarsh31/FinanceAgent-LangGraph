@@ -1,13 +1,5 @@
 """
-ingestion/scheduler.py — Nightly ingestion jobs via APScheduler (Day 8 rewrite)
-
-Changes from Day 6:
-- Universe refresh job added (11 PM UTC) — fetches live S&P 500 + NASDAQ 100
-- Fundamentals ingestion rewritten — yfinance replaces FMP, no rate limits
-- News ingestion rewritten — RSS feeds replace FMP news, no rate limits
-- Screener job added (1 AM UTC) — Stage 1 quantitative filter, outputs top 50
-- FMP used ONLY for constituent lists (2 calls/night) — well within free tier
-- Macro (FRED) unchanged — working perfectly
+ingestion/scheduler.py — Nightly ingestion jobs via APScheduler
 
 Nightly schedule (UTC):
   23:00 — universe refresh (FMP constituent APIs)
@@ -327,7 +319,7 @@ FRED_SERIES = {
 
 
 def run_macro_ingestion(engine: Engine) -> IngestionResult:
-    """Nightly FRED macro ingestion — unchanged from Day 6."""
+    """Nightly FRED macro ingestion."""
     result = IngestionResult(job_name="macro")
 
     try:

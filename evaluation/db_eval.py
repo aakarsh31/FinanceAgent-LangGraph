@@ -133,4 +133,25 @@ def init_eval_db(engine: Engine) -> None:
             ON pipeline_signals (model_version, recommendation, hit)
         """))
 
+        # Approval audit table — one row per approve/reject decision
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS approval_audit (
+                id             BIGSERIAL PRIMARY KEY,
+                thread_id      TEXT NOT NULL,
+                decision       TEXT NOT NULL,
+                decided_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                ticker         TEXT,
+                recommendation TEXT,
+                confidence     TEXT,
+                decided_by     TEXT NOT NULL DEFAULT 'default',
+                UNIQUE (thread_id)
+            )
+        """))
+
+        # Add decided_by column if upgrading from earlier schema version
+        conn.execute(text("""
+            ALTER TABLE approval_audit
+            ADD COLUMN IF NOT EXISTS decided_by TEXT NOT NULL DEFAULT 'default'
+        """))
+
         conn.commit()

@@ -71,6 +71,49 @@ from ingestion.scheduler import (
 )
 
 
+def run_checkpoint_cleanup(engine, days: int = 7):
+    """
+    Delete LangGraph checkpoint rows older than `days` days from Postgres.
+    PostgresSaver stores checkpoints in checkpoints, checkpoint_blobs, and
+    checkpoint_writes tables. We clean up by thread_id based on checkpoint
+    timestamp. Non-fatal — logs failure and continues.
+    """
+    from sqlalchemy import text
+    from datetime import datetime, timedelta, timezone
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    cutoff_str = cutoff.isoformat()
+
+    try:
+        with engine.connect() as conn:
+            # Get thread_ids older than cutoff
+            result = conn.execute(text("""
+                SELECT DISTINCT thread_id FROM checkpoints
+                WHERE metadata->>'created_at' < :cutoff
+                   OR checkpoint_id IN (
+                       SELECT checkpoint_id FROM checkpoints
+                       WHERE (metadata->>'ts')::timestamptz < :cutoff_ts
+                   )
+            """), {"cutoff": cutoff_str, "cutoff_ts": cutoff_str})
+            old_threads = [row[0] for row in result.fetchall()]
+
+            if not old_threads:
+                logger.info(f"[checkpoint_cleanup] Nothing to remove (cutoff: {cutoff_str[:10]})")
+                return
+
+            # Delete from all three checkpoint tables
+            for table in ["checkpoint_writes", "checkpoint_blobs", "checkpoints"]:
+                conn.execute(text(f"""
+                    DELETE FROM {table}
+                    WHERE thread_id = ANY(:threads)
+                """), {"threads": old_threads})
+
+            conn.commit()
+            logger.info(f"[checkpoint_cleanup] Removed {len(old_threads)} threads older than {days} days")
+    except Exception as e:
+        logger.warning(f"[checkpoint_cleanup] Failed (non-fatal): {e}")
+
+
 def main():
     logger.info("Worker starting up...")
 
@@ -124,6 +167,18 @@ def main():
 
     # ── Start scheduler ───────────────────────────────────────────────────────
     scheduler = build_scheduler(engine)
+
+    # Add Postgres checkpoint cleanup — runs nightly at 03:00 UTC
+    # Deletes suspended graph state older than 7 days to prevent unbounded growth
+    scheduler.add_job(
+        lambda: run_checkpoint_cleanup(engine, days=7),
+        trigger="cron",
+        hour=3,
+        minute=0,
+        id="checkpoint_cleanup",
+        name="Nightly Postgres Checkpoint Cleanup",
+        replace_existing=True,
+    )
     logger.info("Scheduler built — jobs registered:")
     for job in scheduler.get_jobs():
         logger.info(f"  {job.name} → id: {job.id}")

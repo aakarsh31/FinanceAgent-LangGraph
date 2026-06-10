@@ -277,11 +277,33 @@ async def analyze(request: Request):
 def verify_approver_key(x_api_key: str = Header(default=None)):
     """
     Require X-API-Key header matching APPROVER_API_KEY env var.
-    If APPROVER_API_KEY is not set, auth is disabled (dev mode).
+
+    Fail-closed by default:
+    - APPROVER_API_KEY set → key must match or 401
+    - AUTH_DISABLED=true  → auth explicitly disabled (dev only)
+    - Neither set         → 503 (misconfigured, refuse to serve)
+
+    Returns key fingerprint (last 8 chars) for audit log attribution.
     """
     required_key = os.getenv("APPROVER_API_KEY")
-    if required_key and x_api_key != required_key:
+    auth_disabled = os.getenv("AUTH_DISABLED", "").lower() == "true"
+
+    if auth_disabled:
+        logger.warning("HITL auth disabled via AUTH_DISABLED=true — dev mode only")
+        return "auth_disabled"
+
+    if not required_key:
+        logger.error("APPROVER_API_KEY not set and AUTH_DISABLED not true — refusing to serve approval endpoints")
+        raise HTTPException(
+            status_code=503,
+            detail="Approval endpoint is misconfigured — APPROVER_API_KEY not set. Set AUTH_DISABLED=true to explicitly disable auth in dev."
+        )
+
+    if x_api_key != required_key:
         raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key")
+
+    # Return last 8 chars of key as fingerprint for audit attribution
+    return f"key:...{x_api_key[-8:]}" if x_api_key else "unknown"
 
 
 def _get_existing_decision(thread_id: str) -> str | None:
@@ -299,42 +321,51 @@ def _get_existing_decision(thread_id: str) -> str | None:
         return None
 
 
-def _write_audit_log(thread_id: str, decision: str, ticker: str, recommendation: str, confidence: str):
-    """Write one row to approval_audit. Non-fatal."""
+def _claim_decision(thread_id: str, decision: str, ticker: str, recommendation: str, confidence: str, decided_by: str = "default") -> bool:
+    """
+    Atomically claim a decision for a thread_id via INSERT.
+    Returns True if this caller won the race (insert succeeded).
+    Raises HTTPException(409) if the existing decision conflicts.
+    """
     if not pg_engine:
-        return
+        return True  # No DB — allow in local dev without Postgres
+
     try:
         with pg_engine.connect() as conn:
             conn.execute(text("""
-                INSERT INTO approval_audit (thread_id, decision, ticker, recommendation, confidence)
-                VALUES (:tid, :decision, :ticker, :rec, :conf)
-                ON CONFLICT (thread_id) DO NOTHING
+                INSERT INTO approval_audit
+                    (thread_id, decision, ticker, recommendation, confidence, decided_by)
+                VALUES
+                    (:tid, :decision, :ticker, :rec, :conf, :decided_by)
             """), {
                 "tid": thread_id,
                 "decision": decision,
                 "ticker": ticker,
                 "rec": recommendation,
                 "conf": confidence,
+                "decided_by": decided_by,
             })
             conn.commit()
-            logger.info(f"Audit log written — thread_id={thread_id} decision={decision} ticker={ticker}")
+            logger.info(f"Audit log written — thread_id={thread_id} decision={decision} ticker={ticker} decided_by={decided_by}")
+            return True
     except Exception as e:
+        error_str = str(e).lower()
+        if "unique" in error_str or "duplicate" in error_str:
+            existing = _get_existing_decision(thread_id)
+            if existing == decision:
+                raise HTTPException(status_code=409, detail=f"Thread {thread_id} already {decision}")
+            else:
+                raise HTTPException(status_code=409, detail=f"Thread {thread_id} already {existing} — cannot {decision}")
         logger.warning(f"Audit log write failed (non-fatal): {e}")
+        return True
 
 
 # ── /approve/{thread_id} ──────────────────────────────────────────────────────
 
 @app.post("/approve/{thread_id}")
-async def approve(thread_id: str, _: None = Depends(verify_approver_key)):
+async def approve(thread_id: str, decided_by: str = Depends(verify_approver_key)):
     config = {"configurable": {"thread_id": thread_id}}
     logger.info(f"/approve — thread_id={thread_id}")
-
-    # Idempotency — reject double approve/reject
-    existing = _get_existing_decision(thread_id)
-    if existing == "approved":
-        raise HTTPException(status_code=409, detail=f"Thread {thread_id} already approved")
-    if existing == "rejected":
-        raise HTTPException(status_code=409, detail=f"Thread {thread_id} was rejected — cannot approve")
 
     try:
         # Resume past trade_gate — supervisor already ran in /analyze
@@ -352,13 +383,15 @@ async def approve(thread_id: str, _: None = Depends(verify_approver_key)):
 
     logger.info(f"Trade gate approved for thread_id={thread_id} — recommendation={supervisor_report.get('recommendation') if supervisor_report else 'N/A'}")
 
-    # Write audit log — before trade so it's recorded even if trade fails
-    _write_audit_log(
+    # Claim the decision atomically — INSERT first, 409 on conflict
+    # This is the idempotency guard: whoever wins the INSERT proceeds to trade
+    _claim_decision(
         thread_id=thread_id,
         decision="approved",
         ticker=ticker,
         recommendation=supervisor_report.get("recommendation", "") if supervisor_report else "",
         confidence=supervisor_report.get("confidence", "") if supervisor_report else "",
+        decided_by=decided_by or "default",
     )
 
     # Record signal for evaluation — non-fatal
@@ -405,19 +438,12 @@ async def approve(thread_id: str, _: None = Depends(verify_approver_key)):
 # ── /reject/{thread_id} ───────────────────────────────────────────────────────
 
 @app.post("/reject/{thread_id}")
-async def reject(thread_id: str, _: None = Depends(verify_approver_key)):
+async def reject(thread_id: str, decided_by: str = Depends(verify_approver_key)):
     """
     Reject a pending analysis — records the decision and blocks future approval.
     The graph state is NOT resumed — trade_gate is never passed.
     """
     logger.info(f"/reject — thread_id={thread_id}")
-
-    # Idempotency
-    existing = _get_existing_decision(thread_id)
-    if existing == "rejected":
-        return {"status": "already_rejected", "thread_id": thread_id}
-    if existing == "approved":
-        raise HTTPException(status_code=409, detail=f"Thread {thread_id} already approved — cannot reject")
 
     # Get state to extract ticker/recommendation for audit log
     config = {"configurable": {"thread_id": thread_id}}
@@ -433,12 +459,14 @@ async def reject(thread_id: str, _: None = Depends(verify_approver_key)):
     except Exception as e:
         logger.warning(f"Could not read state for rejection audit: {e}")
 
-    _write_audit_log(
+    # Atomically claim the rejection — INSERT first, 409 on conflict
+    _claim_decision(
         thread_id=thread_id,
         decision="rejected",
         ticker=ticker,
         recommendation=recommendation,
         confidence=confidence,
+        decided_by=decided_by or "default",
     )
 
     return {

@@ -194,10 +194,10 @@ def run_benchmark():
 
     avg = statistics.mean(times)
     print(f"\n{'─'*60}")
-    print(f"  SUMMARY")
+    print("  SUMMARY")
     print(f"{'─'*60}")
     print(f"  Avg: {avg:.2f}s  |  Min: {min(times):.2f}s  |  Max: {max(times):.2f}s")
-    print(f"\n  Per-agent averages:")
+    print("\n  Per-agent averages:")
     for agent in AGENTS_IN_ORDER:
         if agent_durations[agent]:
             label = agent.replace("_agent", "").replace("_analyst", "").replace("_", " ").title()

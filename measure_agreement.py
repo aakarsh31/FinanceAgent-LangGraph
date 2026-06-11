@@ -76,7 +76,7 @@ def run_pipeline(graph, ticker: str, retry: bool = False) -> str | None:
         err = str(e).lower()
         if "rate limit" in err or "too many requests" in err:
             if not retry:
-                print(f"  Rate limit — waiting 60s before retry...")
+                print("  Rate limit — waiting 60s before retry...")
                 time.sleep(60)
                 return run_pipeline(graph, ticker, retry=True)
             print(f"  Rate limit persists — skipping {ticker}")
@@ -125,7 +125,7 @@ def print_results_table(results: list[dict]):
     decided = agreed + disagreed
     pct = (agreed / decided * 100) if decided > 0 else 0.0
 
-    print(f"\nRESULTS")
+    print("\nRESULTS")
     print(f"  Tickers    : {total}")
     print(f"  Agreed     : {agreed}")
     print(f"  Disagreed  : {disagreed}")

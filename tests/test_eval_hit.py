@@ -5,7 +5,6 @@ Transcription of the manual eval verification. Pins boundary behavior
 so future changes to hit definition are explicit and deliberate.
 """
 
-import pytest
 from evaluation.eval_job import _determine_hit, _fetch_return
 
 

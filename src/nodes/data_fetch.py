@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 
 import requests
 import yfinance as yf
-from sqlalchemy import select, text, desc
+from sqlalchemy import text
 
 from src.exceptions import DataFetchRateLimitError, EmptyDataError, TickerNotFoundError
 from src.states.financestate import AnalystConsensus, FinanceState

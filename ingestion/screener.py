@@ -309,7 +309,6 @@ def _write_scores(engine: Engine, scored: list[dict], screen_time: datetime) -> 
 def get_top_tickers(engine: Engine) -> list[str]:
     """
     Return today's top 50 tickers from most recent screen.
-    
     Fix: replaced fragile DISTINCT ON with subquery that correctly
     finds the latest screen_date and returns top tickers from it.
     """

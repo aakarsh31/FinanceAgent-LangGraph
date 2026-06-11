@@ -22,10 +22,6 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from ingestion.db import (
-    cache_miss_log,
-    data_freshness_meta,
-    get_engine,
-    init_db,
     processed_fundamentals,
     processed_news,
     processed_macro,

@@ -14,7 +14,7 @@ class LLMClient():
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise ValueError("OPENAI_API_KEY environment variable is not set")
-        
+
         self.fast_llm = ChatOpenAI(
             api_key = api_key,
             model = FAST_MODEL,
@@ -26,7 +26,7 @@ class LLMClient():
             model = SMART_MODEL,
             temperature=0
         )
-    
+
     def get_llm(self,tier: str) -> ChatOpenAI:
         if tier.lower() == 'smart':
             return self.smart_llm

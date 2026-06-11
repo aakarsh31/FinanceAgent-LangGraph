@@ -46,7 +46,7 @@ DECISION FRAMEWORK — apply this before writing:
 
 STEP 1 — Read the bear vs bull confidence:
 - Bear High + Bull Low = strong Sell lean
-- Bull High + Bear Low = strong Buy lean  
+- Bull High + Bear Low = strong Buy lean
 - Both High or both Medium = read valuation and sentiment to break tie
 
 TIEBREAKER when Bear High AND Bull High simultaneously:

@@ -5,7 +5,6 @@ Tests the filtering logic in maybe_execute_trade without placing real orders.
 All AlpacaClient calls are mocked — we're testing the rules, not the SDK.
 """
 
-import pytest
 from unittest.mock import MagicMock, patch
 
 

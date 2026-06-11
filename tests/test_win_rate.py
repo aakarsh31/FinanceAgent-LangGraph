@@ -6,7 +6,6 @@ with known outcomes. Verifies the fix from the audit — win rate must
 be computed from closed round trips, not filled buy count.
 """
 
-import pytest
 
 
 def _compute_win_rate(orders: list[dict]) -> dict:

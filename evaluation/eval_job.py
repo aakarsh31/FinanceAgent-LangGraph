@@ -19,7 +19,6 @@ Design decisions:
     matured → failed (yfinance returned no data)
 """
 
-import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional

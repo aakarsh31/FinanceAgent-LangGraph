@@ -129,9 +129,9 @@ def _compute_indicators(df: pd.DataFrame) -> dict:
                 prev_ma200 = float(ma200.iloc[-2]) if len(ma200.dropna()) > 1 else ma200_val
 
                 if ma50_val > ma200_val and prev_ma50 <= prev_ma200:
-                    result["ma"] = f"Golden cross — 50MA just crossed above 200MA (bullish trend change)"
+                    result["ma"] = "Golden cross — 50MA just crossed above 200MA (bullish trend change)"
                 elif ma50_val < ma200_val and prev_ma50 >= prev_ma200:
-                    result["ma"] = f"Death cross — 50MA just crossed below 200MA (bearish trend change)"
+                    result["ma"] = "Death cross — 50MA just crossed below 200MA (bearish trend change)"
                 elif above_200 and above_50:
                     result["ma"] = f"Price above both 50MA and 200MA — established uptrend ({pct_vs_200:+.1f}% vs 200MA)"
                 elif not above_200 and not above_50:

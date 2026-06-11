@@ -118,8 +118,6 @@ async def lifespan(app: FastAPI):
     if database_url:
         try:
             from langgraph.checkpoint.postgres import PostgresSaver
-            # Use psycopg connection string format
-            conn_str = database_url.replace("postgresql://", "postgresql+psycopg://") if "postgresql+psycopg" not in database_url else database_url
             # PostgresSaver needs plain psycopg format (not SQLAlchemy)
             pg_conn_str = database_url
             if pg_conn_str.startswith("postgresql+"):

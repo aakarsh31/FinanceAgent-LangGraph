@@ -87,7 +87,6 @@ def refresh_universe(engine: Engine) -> dict:
     # Uncomment when adding Russell 2000 support:
     # russell = _fetch_russell_2000()  # implement via iShares IWM holdings API
     # russell_symbols = {item["symbol"] for item in russell}
-    russell_symbols: set[str] = set()
     # ─────────────────────────────────────────────────────────────────────────
 
     # Build unified ticker map with index membership

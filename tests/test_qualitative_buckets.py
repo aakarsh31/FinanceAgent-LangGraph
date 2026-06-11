@@ -9,7 +9,6 @@ Also tests the P/E isolation at the supervisor level — verifies that
 qualitative_drivers contains no numeric ratios.
 """
 
-import pytest
 from src.nodes.bear_analyst import _earnings_health, _revenue_trend, _leverage_level
 
 

@@ -27,3 +27,9 @@ dependencies = [
     "psycopg[binary]>=3.3.4",
     "alpaca-py>=0.43.4",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+    "ruff>=0.15.16",
+]

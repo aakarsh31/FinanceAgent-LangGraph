@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "feat/**", "fix/**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Run tests
+        env:
+          # Minimal env so imports don't fail — no real API calls made
+          OPENAI_API_KEY: "test-key-not-used"
+          FRED_API_KEY: "test-key-not-used"
+          AUTH_DISABLED: "true"
+        run: uv run pytest tests/ -v --tb=short
+
+      - name: Lint
+        run: uv run ruff check . --select E,F,W --ignore E501

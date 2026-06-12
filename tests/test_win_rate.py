@@ -6,7 +6,6 @@ with known outcomes. Imports from alpaca_broker.portfolio_stats —
 the real production module used by /portfolio — so tests are load-bearing.
 """
 
-import pytest
 from alpaca_broker.portfolio_stats import compute_win_rate
 
 

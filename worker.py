@@ -62,7 +62,6 @@ logger = logging.getLogger("worker")
 
 from ingestion.db import get_engine, init_db
 from evaluation.db_eval import init_eval_db
-from evaluation.eval_job import run_eval_maturation
 from ingestion.scheduler import (
     build_scheduler,
     run_fundamentals_ingestion,

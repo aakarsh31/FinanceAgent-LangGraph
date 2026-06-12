@@ -6,7 +6,6 @@ Every rule is explicit and pinned here so changes to policy are always
 deliberate and visible in the test diff.
 """
 
-import pytest
 from src.decision.rules import apply_equity_rules, apply_crypto_rules, RuleVerdict
 
 

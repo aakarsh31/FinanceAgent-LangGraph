@@ -62,6 +62,7 @@ logger = logging.getLogger("worker")
 
 from ingestion.db import get_engine, init_db
 from evaluation.db_eval import init_eval_db
+from evaluation.eval_job import run_eval_maturation
 from ingestion.scheduler import (
     build_scheduler,
     run_fundamentals_ingestion,
@@ -85,15 +86,12 @@ def run_checkpoint_cleanup(engine, days: int = 7):
 
     try:
         with engine.connect() as conn:
-            # Get thread_ids older than cutoff
+            # PostgresSaver stores the checkpoint timestamp in the checkpoint JSONB column
+            # under the 'ts' key — NOT in metadata. Both paths are queried for compatibility.
             result = conn.execute(text("""
                 SELECT DISTINCT thread_id FROM checkpoints
-                WHERE metadata->>'created_at' < :cutoff
-                   OR checkpoint_id IN (
-                       SELECT checkpoint_id FROM checkpoints
-                       WHERE (metadata->>'ts')::timestamptz < :cutoff_ts
-                   )
-            """), {"cutoff": cutoff_str, "cutoff_ts": cutoff_str})
+                WHERE (checkpoint->>'ts')::timestamptz < :cutoff_ts
+            """), {"cutoff_ts": cutoff_str})
             old_threads = [row[0] for row in result.fetchall()]
 
             if not old_threads:

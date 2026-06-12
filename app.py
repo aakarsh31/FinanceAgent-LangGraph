@@ -18,6 +18,7 @@ from evaluation.db_eval import init_eval_db
 from evaluation.signal_store import record_signal
 from alpaca_broker.trade_executor import maybe_execute_trade
 from alpaca_broker.client import AlpacaClient, AlpacaError
+from alpaca_broker.portfolio_stats import compute_win_rate
 
 import os
 from dotenv import load_dotenv
@@ -118,6 +119,8 @@ async def lifespan(app: FastAPI):
     if database_url:
         try:
             from langgraph.checkpoint.postgres import PostgresSaver
+            # Use psycopg connection string format
+            conn_str = database_url.replace("postgresql://", "postgresql+psycopg://") if "postgresql+psycopg" not in database_url else database_url
             # PostgresSaver needs plain psycopg format (not SQLAlchemy)
             pg_conn_str = database_url
             if pg_conn_str.startswith("postgresql+"):
@@ -354,8 +357,17 @@ def _claim_decision(thread_id: str, decision: str, ticker: str, recommendation: 
                 raise HTTPException(status_code=409, detail=f"Thread {thread_id} already {decision}")
             else:
                 raise HTTPException(status_code=409, detail=f"Thread {thread_id} already {existing} — cannot {decision}")
-        logger.warning(f"Audit log write failed (non-fatal): {e}")
-        return True
+    except Exception as e:
+        error_str = str(e).lower()
+        if "unique" in error_str or "duplicate" in error_str:
+            existing = _get_existing_decision(thread_id)
+            if existing == decision:
+                raise HTTPException(status_code=409, detail=f"Thread {thread_id} already {decision}")
+            else:
+                raise HTTPException(status_code=409, detail=f"Thread {thread_id} already {existing} — cannot {decision}")
+        # Non-unique DB error — fail closed: can't record decision, won't execute trade
+        logger.error(f"Audit log write failed — failing closed, trade not executed: {e}")
+        raise HTTPException(status_code=500, detail="Audit log write failed — trade not executed. Retry or contact support.")
 
 
 # ── /approve/{thread_id} ──────────────────────────────────────────────────────
@@ -364,6 +376,14 @@ def _claim_decision(thread_id: str, decision: str, ticker: str, recommendation: 
 async def approve(thread_id: str, decided_by: str = Depends(verify_approver_key)):
     config = {"configurable": {"thread_id": thread_id}}
     logger.info(f"/approve — thread_id={thread_id}")
+
+    # Pre-check: if a decision already exists, 409 immediately — before resuming graph
+    # This closes the resume hole: rejected threads must never advance past trade_gate
+    existing = _get_existing_decision(thread_id)
+    if existing == "approved":
+        raise HTTPException(status_code=409, detail=f"Thread {thread_id} already approved")
+    if existing == "rejected":
+        raise HTTPException(status_code=409, detail=f"Thread {thread_id} was rejected — cannot approve")
 
     try:
         # Resume past trade_gate — supervisor already ran in /analyze
@@ -568,36 +588,9 @@ async def portfolio():
         total_pnl = round(account["equity"] - base_value, 2)
         total_pnl_pct = round((total_pnl / base_value) * 100, 2) if base_value > 0 else 0.0
 
-        # Win rate — computed from closed round trips only
-        # A win = a sell that closed at a higher price than the avg entry of preceding buys
-        # Open positions are excluded — unrealized P&L reported separately
+        # Win rate — computed from closed round trips only via portfolio_stats
+        win_stats = compute_win_rate(orders)
         filled = [o for o in orders if o["status"] == "filled"]
-        buys  = [o for o in filled if o["side"] == "buy"  and o.get("filled_avg_price")]
-        sells = [o for o in filled if o["side"] == "sell" and o.get("filled_avg_price")]
-
-        # Build avg entry price per symbol from buy fills
-        entry_prices: dict[str, list[float]] = {}
-        for o in sorted(buys, key=lambda x: x.get("submitted_at") or ""):
-            sym = o["ticker"]
-            entry_prices.setdefault(sym, []).append(float(o["filled_avg_price"]))
-
-        # For each sell, compare against avg entry price of that symbol's buys
-        closed_trades = []
-        for o in sells:
-            sym = o["ticker"]
-            entries = entry_prices.get(sym)
-            if entries:
-                avg_entry = sum(entries) / len(entries)
-                exit_price = float(o["filled_avg_price"])
-                closed_trades.append({
-                    "ticker": sym,
-                    "avg_entry": round(avg_entry, 4),
-                    "exit_price": round(exit_price, 4),
-                    "is_win": exit_price > avg_entry,
-                })
-
-        wins = [t for t in closed_trades if t["is_win"]]
-        win_rate = round(len(wins) / len(closed_trades), 4) if closed_trades else None
 
         return {
             "status": "ok",
@@ -612,8 +605,8 @@ async def portfolio():
             "stats": {
                 "trades_placed": len(filled),
                 "open_positions": len(positions),
-                "closed_trades": len(closed_trades),
-                "win_rate": win_rate,  # None when no closed round trips yet
+                "closed_trades": win_stats["closed_trades"],
+                "win_rate": win_stats["win_rate"],
             },
         }
     except AlpacaError as e:

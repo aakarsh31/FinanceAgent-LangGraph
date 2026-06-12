@@ -2,6 +2,7 @@ import logging
 from langchain_core.messages import HumanMessage
 from src.states.financestate import FinanceState, SupervisorReport
 from src.exceptions import LLMStructuredOutputError
+from src.decision.rules import apply_equity_rules, apply_crypto_rules
 
 
 logger = logging.getLogger(__name__)
@@ -31,62 +32,27 @@ INVESTMENT PRINCIPLES (reason FROM these, do not follow as a checklist):
 """
 
 SUPERVISOR_PROMPT_EQUITY = """You are the Portfolio Manager at an elite investment research firm.
-Your team has submitted their research on {ticker}. Your job is to synthesise all inputs into a DECISIVE investment memo.
-You are accountable for this recommendation. Waffling into Hold when the data is clear is a failure of analysis.
+Your team has submitted their research on {ticker}. The investment decision has already been made
+by the policy engine — your job is to write the investment memo explaining it.
 
 CRITICAL DATA BOUNDARY — READ FIRST:
 You have NOT been given P/E ratio data, sector median P/E, or PEG ratio data.
 Do NOT invent, recall, or estimate any P/E ratio, sector multiple, or sector comparison.
-Do NOT write phrases like "35x P/E", "1400% premium over sector", "sector median = 2.34x", or any variant.
 The ValuationAnalyst's label (Overvalued/Fairly Valued/Undervalued) is the ONLY valuation signal you have.
-Use it. Do not re-derive it. Do not support it with invented numbers.
-Violation of this rule produces hallucinated analysis that undermines every other signal.
 
-DECISION FRAMEWORK — apply this before writing:
+POLICY DECISION (DO NOT OVERRIDE):
+Recommendation: {policy_recommendation}
+Confidence Floor: {policy_confidence_floor}
+Rule Fired: {policy_rule_fired}
+Rule Detail: {policy_rule_detail}
+Analyst Override: {policy_analyst_override}
 
-STEP 1 — Read the bear vs bull confidence:
-- Bear High + Bull Low = strong Sell lean
-- Bull High + Bear Low = strong Buy lean
-- Both High or both Medium = read valuation and sentiment to break tie
-
-TIEBREAKER when Bear High AND Bull High simultaneously:
-- Overvalued + revenue stagnant/declining → Sell (overpriced with weak growth)
-- Overvalued + revenue modest growth → Hold (premium partially justified)
-- Overvalued + revenue high growth → Hold (growth justifies some premium, but stretched)
-- Fairly Valued + any growth → Hold
-- Undervalued + revenue high growth → Buy (cheap with strong growth)
-- Undervalued + revenue declining → Hold (cheap for a reason)
-Apply this tiebreaker BEFORE checking other steps when both confidences are High.
-
-STEP 2 — Apply valuation overlay:
-- Overvalued + Bear High = Sell
-- Overvalued + Bull Medium = Hold (premium not justified)
-- Undervalued + Bull High = Buy
-- Undervalued + Bear Medium = Hold (cheap but deteriorating)
-
-STEP 3 — Apply macro filter:
-- Risk-Off Tightening or Stagflation: reduce Buy to Hold, elevate Hold to Sell
-- Risk-On Easing: reduce Hold to Buy if valuation supports it
-- Risk-On Tightening: neutral filter, let fundamentals dominate
-
-STEP 4 — Apply sentiment signal:
-- Sentiment score < -0.5 AND bear confidence High = Sell unless Undervalued + strong catalysts
-- Sentiment score > 0.5 AND bull confidence High = Buy unless Overvalued
-
-EXPLICIT SELL CONDITIONS (any ONE is sufficient):
-✓ Bear confidence High + valuation Overvalued + sentiment bearish
-✓ Revenue trend declining + valuation Overvalued + sentiment bearish
-✓ Risk-Off Tightening or Stagflation regime + bear confidence High + sentiment bearish
-✓ Analyst consensus Sell + bear confidence High + negative sentiment
-✓ Tiebreaker (Bear High AND Bull High) + Fairly Valued + revenue trend stagnant/declining + sentiment bearish
-
-EXPLICIT BUY CONDITIONS (any ONE is sufficient):
-✓ Bull confidence High + valuation Undervalued/Fair + macro Risk-On
-✓ Revenue growth >20% + analyst consensus Buy + sentiment bullish
-✓ Undervalued by >20% vs analyst target + bull confidence High
-
-DEFAULT TO HOLD only when signals genuinely conflict with no dominant direction.
-"Signals are mixed" is NOT a reason to Hold if one side clearly dominates.
+YOUR ROLE — Explain, don't decide:
+1. Write a memo that explains WHY the policy made this call using the research below
+2. Your recommendation field MUST match the policy recommendation exactly
+3. Your confidence field must be >= the confidence floor (you may raise it, never lower it)
+4. If analyst_override is True, explain explicitly why this diverges from Wall Street consensus
+5. Reference the specific signals that drove the rule — make it clear and defensible
 
 {supervisor_equity_reference}
 --- MACRO REGIME ---
@@ -122,13 +88,13 @@ Reasoning: {sentiment_reasoning}
 Recommendation: {analyst_recommendation} | Target: {target_price} | Analysts: {num_analysts}
 
 Your output:
-- summary: 3-4 sentences. State which signals dominated the decision. Be direct.
+- summary: 3-4 sentences. Explain which signals drove the policy decision. Reference the rule detail.
 - macro_context: 1-2 sentences on how {regime_label} specifically affects this asset class and ticker.
 - bull_case: 2-3 sentences — the strongest bull arguments with the actual metrics.
 - bear_case: 2-3 sentences — the strongest bear arguments with the actual metrics.
-- recommendation: EXACTLY one of 'Buy', 'Hold', or 'Sell' — based on the decision framework above
-- confidence: 'High' if 3+ signals align, 'Medium' if majority align, 'Low' if genuinely mixed
-- key_metrics: list of 6-8 metrics. Include actual values where available. Example: ['Earnings: Profitable ($8.26 EPS)', 'Revenue: Healthy growth (17%)', 'Regime: Risk-Off Tightening', 'Bear Confidence: High', 'Valuation: Overvalued', 'Sentiment: -0.65 (Bearish)', 'Volatility: 23.6%', 'Beta: 1.09']
+- recommendation: EXACTLY '{policy_recommendation}' — set by policy, do not change it
+- confidence: '{policy_confidence_floor}' or higher — never lower than the floor
+- key_metrics: list of 6-8 metrics with actual values. Example: ['Earnings: Profitable ($8.26 EPS)', 'Revenue: Healthy growth (17%)', 'Regime: Risk-Off Tightening', 'Bear Confidence: High', 'Valuation: Overvalued', 'Sentiment: -0.65 (Bearish)', 'Volatility: 23.6%', 'Beta: 1.09']
 - analyst_agreement: one sentence comparing your call to Wall Street consensus and explaining any divergence
 """
 
@@ -273,6 +239,17 @@ class SupervisorAgent:
             btc_dom = crypto_signals.get("btc_dominance_pct")
             gh_mom = crypto_signals.get("github_momentum_pct")
 
+            # Apply deterministic crypto policy rules
+            crypto_verdict = apply_crypto_rules(
+                fear_greed_score=fear_greed_val,
+                network_health=onchain.network_health if onchain else None,
+                sentiment_score=sentiment.sentiment_score if sentiment else None,
+                price_change_30d=crypto_signals.get("price_change_30d"),
+                regime_label=macro.regime_label if macro else None,
+                developer_momentum=gh_mom,
+            )
+            logger.info(f"PolicyEngine [{ticker}] crypto → {crypto_verdict.recommendation} ({crypto_verdict.confidence_floor}) rule={crypto_verdict.rule_fired}")
+
             prompt = SUPERVISOR_PROMPT_CRYPTO.format(
                 **shared,
                 supervisor_crypto_reference=SUPERVISOR_CRYPTO_REFERENCE,
@@ -323,11 +300,30 @@ class SupervisorAgent:
                 if de < 2.0: return f"Elevated leverage ({de:.1f}x D/E)"
                 return f"High leverage ({de:.1f}x D/E)"
 
+            revenue_trend_label = _revenue_trend(fundamentals.revenue_growth if fundamentals else None)
+
+            # Apply deterministic policy rules — LLM explains the verdict, doesn't compute it
+            verdict = apply_equity_rules(
+                bull_confidence=bull.confidence if bull else None,
+                bear_confidence=bear.confidence if bear else None,
+                valuation_label=valuation.valuation_label if valuation else None,
+                regime_label=macro.regime_label if macro else None,
+                sentiment_score=sentiment.sentiment_score if sentiment else None,
+                revenue_trend=revenue_trend_label,
+                analyst_recommendation=consensus.recommendation if consensus else None,
+            )
+            logger.info(f"PolicyEngine [{ticker}] → {verdict.recommendation} ({verdict.confidence_floor}) rule={verdict.rule_fired}")
+
             prompt = SUPERVISOR_PROMPT_EQUITY.format(
                 **shared,
                 supervisor_equity_reference=SUPERVISOR_EQUITY_REFERENCE,
+                policy_recommendation=verdict.recommendation,
+                policy_confidence_floor=verdict.confidence_floor,
+                policy_rule_fired=verdict.rule_fired,
+                policy_rule_detail=verdict.rule_detail,
+                policy_analyst_override=verdict.analyst_override,
                 earnings_health=_earnings_health(fundamentals.EPS if fundamentals else None),
-                revenue_trend=_revenue_trend(fundamentals.revenue_growth if fundamentals else None),
+                revenue_trend=revenue_trend_label,
                 leverage_level=_leverage_level(fundamentals.debt_to_equity if fundamentals else None),
                 valuation_label=fmt(valuation.valuation_label if valuation else None),
                 valuation_drivers=fmt(valuation.qualitative_drivers if valuation else None),

@@ -50,6 +50,12 @@ pipeline_signals = Table(
     Column("recommendation", String(10), nullable=False),   # "Buy", "Hold", "Sell"
     Column("confidence", String(10), nullable=False),       # "High", "Medium", "Low"
 
+    # Policy engine fields — for per-rule performance attribution
+    Column("policy_rule_fired", String(100), nullable=True),    # e.g. "explicit_sell_overvalued_bearish"
+    Column("policy_confidence_floor", String(10), nullable=True), # "High", "Medium", "Low"
+    Column("analyst_override", Boolean, nullable=True),          # True when diverging from Wall Street
+    Column("llm_recommendation_matched", Boolean, nullable=True), # False = LLM tried to override policy
+
     # Reasoning (stored for audit + LangSmith correlation)
     Column("supervisor_summary", Text, nullable=True),
     Column("bull_case", Text, nullable=True),
@@ -153,5 +159,14 @@ def init_eval_db(engine: Engine) -> None:
             ALTER TABLE approval_audit
             ADD COLUMN IF NOT EXISTS decided_by TEXT NOT NULL DEFAULT 'default'
         """))
+
+        # Add policy engine columns to pipeline_signals if upgrading from earlier schema
+        for col_sql in [
+            "ALTER TABLE pipeline_signals ADD COLUMN IF NOT EXISTS policy_rule_fired VARCHAR(100)",
+            "ALTER TABLE pipeline_signals ADD COLUMN IF NOT EXISTS policy_confidence_floor VARCHAR(10)",
+            "ALTER TABLE pipeline_signals ADD COLUMN IF NOT EXISTS analyst_override BOOLEAN",
+            "ALTER TABLE pipeline_signals ADD COLUMN IF NOT EXISTS llm_recommendation_matched BOOLEAN",
+        ]:
+            conn.execute(text(col_sql))
 
         conn.commit()

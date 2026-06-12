@@ -204,6 +204,27 @@ class SupervisorReport(BaseModel):
     analyst_agreement: str = Field(
         description="Whether the pipeline recommendation agrees with Wall Street consensus e.g. 'Agreed — both recommend Hold' or 'Disagreed — pipeline says Buy, analysts say Sell'"
     )
+    # ── Policy engine fields — stamped from RuleVerdict, not LLM output ────────
+    policy_recommendation: str = Field(
+        default="",
+        description="Recommendation as set by the deterministic policy engine — authoritative for trade execution"
+    )
+    policy_confidence_floor: str = Field(
+        default="Low",
+        description="Minimum confidence set by policy engine — trade executor uses this, not LLM confidence"
+    )
+    policy_rule_fired: str = Field(
+        default="",
+        description="Machine-readable name of the rule that drove the recommendation"
+    )
+    policy_analyst_override: bool = Field(
+        default=False,
+        description="True when recommendation diverges from Wall Street consensus — used for divergence metric"
+    )
+    llm_recommendation_matched: bool = Field(
+        default=True,
+        description="False when LLM tried to override the policy recommendation — telemetry for model drift detection"
+    )
 
 
 

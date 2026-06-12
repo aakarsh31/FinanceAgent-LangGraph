@@ -344,5 +344,35 @@ class SupervisorAgent:
             logger.error(f"SupervisorAgent LLM call failed for {ticker}: {e}", exc_info=True)
             raise LLMStructuredOutputError(f"SupervisorAgent failed to produce structured output: {e}")
 
-        logger.info(f"SupervisorAgent complete for {ticker} — recommendation={result.recommendation} confidence={result.confidence}")
+        # ── Schema enforcement — stamp verdict fields, overwrite recommendation ──
+        # The LLM may have populated recommendation correctly or tried to override.
+        # We enforce the policy verdict either way and log any mismatch as telemetry.
+        if asset_class == "crypto":
+            active_verdict = crypto_verdict
+        else:
+            active_verdict = verdict
+
+        llm_matched = result.recommendation == active_verdict.recommendation
+        if not llm_matched:
+            logger.warning(
+                f"SupervisorAgent [{ticker}] LLM recommendation '{result.recommendation}' "
+                f"overridden by policy '{active_verdict.recommendation}' "
+                f"(rule={active_verdict.rule_fired})"
+            )
+
+        # Overwrite with policy values — this is the enforcement, not the instruction
+        result.recommendation        = active_verdict.recommendation
+        result.policy_recommendation = active_verdict.recommendation
+        result.policy_confidence_floor = active_verdict.confidence_floor
+        result.policy_rule_fired     = active_verdict.rule_fired
+        result.policy_analyst_override = active_verdict.analyst_override
+        result.llm_recommendation_matched = llm_matched
+
+        logger.info(
+            f"SupervisorAgent complete for {ticker} — "
+            f"recommendation={result.recommendation} "
+            f"confidence={result.confidence} "
+            f"floor={active_verdict.confidence_floor} "
+            f"llm_matched={llm_matched}"
+        )
         return {"supervisor_report": result.model_dump()}

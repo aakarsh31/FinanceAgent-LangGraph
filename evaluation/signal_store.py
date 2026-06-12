@@ -84,6 +84,12 @@ def record_signal(
         bear_case = supervisor_report.get("bear_case")
         key_metrics = supervisor_report.get("key_metrics", [])
 
+        # Policy engine fields — for per-rule performance attribution
+        policy_rule_fired            = supervisor_report.get("policy_rule_fired", "")
+        policy_confidence_floor      = supervisor_report.get("policy_confidence_floor", "Low")
+        analyst_override             = supervisor_report.get("policy_analyst_override", False)
+        llm_recommendation_matched   = supervisor_report.get("llm_recommendation_matched", True)
+
         # Get current market price at signal time
         price_at_signal = _get_current_price(ticker)
 
@@ -109,12 +115,16 @@ def record_signal(
                 INSERT INTO pipeline_signals (
                     run_id, ticker, asset_class, model_version,
                     recommendation, confidence,
+                    policy_rule_fired, policy_confidence_floor,
+                    analyst_override, llm_recommendation_matched,
                     supervisor_summary, bull_case, bear_case, key_metrics,
                     price_at_signal, signal_date,
                     eval_status, created_at
                 ) VALUES (
                     :run_id, :ticker, :asset_class, :model_version,
                     :recommendation, :confidence,
+                    :policy_rule_fired, :policy_confidence_floor,
+                    :analyst_override, :llm_recommendation_matched,
                     :supervisor_summary, :bull_case, :bear_case, :key_metrics,
                     :price_at_signal, :signal_date,
                     'pending', :created_at
@@ -126,6 +136,10 @@ def record_signal(
                 "model_version": MODEL_VERSION,
                 "recommendation": recommendation,
                 "confidence": confidence,
+                "policy_rule_fired": policy_rule_fired,
+                "policy_confidence_floor": policy_confidence_floor,
+                "analyst_override": analyst_override,
+                "llm_recommendation_matched": llm_recommendation_matched,
                 "supervisor_summary": summary,
                 "bull_case": bull_case,
                 "bear_case": bear_case,
@@ -140,6 +154,8 @@ def record_signal(
             f"signal_store: recorded signal — "
             f"run_id={run_id} ticker={ticker} "
             f"recommendation={recommendation} confidence={confidence} "
+            f"rule={policy_rule_fired} analyst_override={analyst_override} "
+            f"llm_matched={llm_recommendation_matched} "
             f"price_at_signal={price_at_signal} "
             f"model_version={MODEL_VERSION}"
         )

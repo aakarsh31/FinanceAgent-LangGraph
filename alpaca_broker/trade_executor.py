@@ -39,7 +39,11 @@ def maybe_execute_trade(
         }
     """
     recommendation = (supervisor_report.get("recommendation") or "").strip().capitalize()
-    confidence = (supervisor_report.get("confidence") or "").strip().capitalize()
+
+    # Use policy_confidence_floor for trade gating — not LLM-reported confidence
+    # This ensures LLM enthusiasm never triggers a trade on a Medium-floor verdict
+    confidence = (supervisor_report.get("policy_confidence_floor") or
+                  supervisor_report.get("confidence") or "").strip().capitalize()
 
     # Rule 1: equity only
     if asset_class != "equity":

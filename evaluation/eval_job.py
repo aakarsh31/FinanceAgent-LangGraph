@@ -19,6 +19,7 @@ Design decisions:
     matured → failed (yfinance returned no data)
 """
 
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -61,14 +62,30 @@ def _fetch_return(ticker: str, start_date: datetime, end_date: datetime) -> Opti
         return None
 
 
-def _determine_hit(recommendation: str, return_30d: float) -> Optional[bool]:
+def _determine_hit(
+    recommendation: str,
+    return_30d: float,
+    spy_return_30d: Optional[float] = None,
+    relative: bool = True,
+) -> Optional[bool]:
     """
     Determine if the recommendation was correct.
     Hold signals return None — excluded from hit rate.
+
+    Args:
+        relative: if True (default), Buy is a hit only if it beat SPY.
+                  if False, Buy is a hit if return > 0 (absolute direction).
+
+    The relative definition is more demanding and more meaningful — beating
+    a passive SPY position is the correct bar for active recommendations.
     """
     if recommendation == "Buy":
+        if relative and spy_return_30d is not None:
+            return return_30d > spy_return_30d  # beat the benchmark
         return return_30d > 0
     elif recommendation == "Sell":
+        if relative and spy_return_30d is not None:
+            return return_30d < spy_return_30d  # underperformed benchmark
         return return_30d < 0
     else:  # Hold
         return None
@@ -158,7 +175,9 @@ def run_eval_maturation(engine: Engine) -> dict:
                     logger.warning(f"eval_job: failed to evaluate {row.ticker} (id={row.id})")
                     continue
 
-                hit = _determine_hit(row.recommendation, ticker_return)
+                hit = _determine_hit(row.recommendation, ticker_return, spy_return, relative=True)
+                # Also compute absolute hit for comparison
+                hit_absolute = _determine_hit(row.recommendation, ticker_return, relative=False)
 
                 conn.execute(text("""
                     UPDATE pipeline_signals
@@ -202,9 +221,27 @@ def run_eval_maturation(engine: Engine) -> dict:
         return summary
 
 
+def _binomial_ci(hits: int, n: int, z: float = 1.96) -> tuple[float, float]:
+    """
+    Wilson score confidence interval for a binomial proportion.
+    More accurate than normal approximation for small n.
+
+    Returns (lower, upper) bounds at 95% confidence (z=1.96).
+    Returns (0.0, 1.0) when n == 0.
+    """
+    if n == 0:
+        return (0.0, 1.0)
+    p = hits / n
+    denom = 1 + z**2 / n
+    centre = (p + z**2 / (2 * n)) / denom
+    margin = z * ((p * (1 - p) / n + z**2 / (4 * n**2)) ** 0.5) / denom
+    return (round(max(0.0, centre - margin), 4), round(min(1.0, centre + margin), 4))
+
+
 def _write_eval_run(engine: Engine, run_time: datetime) -> None:
     """
     Aggregate all evaluated signals into a single eval_run row.
+    Includes baselines, per-rule attribution, and divergence metric.
     Called after each maturation batch.
     """
     try:
@@ -216,6 +253,7 @@ def _write_eval_run(engine: Engine, run_time: datetime) -> None:
                     COUNT(*) FILTER (WHERE recommendation = 'Sell') as sell_count,
                     COUNT(*) FILTER (WHERE recommendation = 'Hold') as hold_count,
 
+                    -- Primary hit rate: SPY-relative (beat the benchmark)
                     AVG(CASE WHEN hit = true THEN 1.0 ELSE 0.0 END)
                         FILTER (WHERE recommendation != 'Hold') as hit_rate_overall,
                     AVG(CASE WHEN hit = true THEN 1.0 ELSE 0.0 END)
@@ -223,9 +261,16 @@ def _write_eval_run(engine: Engine, run_time: datetime) -> None:
                     AVG(CASE WHEN hit = true THEN 1.0 ELSE 0.0 END)
                         FILTER (WHERE recommendation = 'Sell') as hit_rate_sell,
 
+                    -- Count hits for CI calculation
+                    COUNT(*) FILTER (WHERE hit = true AND recommendation != 'Hold') as hits_total,
+                    COUNT(*) FILTER (WHERE hit = true AND recommendation = 'Buy') as hits_buy,
+                    COUNT(*) FILTER (WHERE hit = true AND recommendation = 'Sell') as hits_sell,
+
+                    -- Return metrics
                     AVG(return_30d) FILTER (WHERE recommendation = 'Buy') as avg_return_buy,
                     AVG(return_30d) FILTER (WHERE recommendation = 'Sell') as avg_return_sell,
 
+                    -- Alpha vs SPY
                     AVG(return_30d - spy_return_30d)
                         FILTER (WHERE recommendation = 'Buy' AND spy_return_30d IS NOT NULL)
                         as avg_alpha_buy,
@@ -233,15 +278,31 @@ def _write_eval_run(engine: Engine, run_time: datetime) -> None:
                         FILTER (WHERE recommendation = 'Sell' AND spy_return_30d IS NOT NULL)
                         as avg_alpha_sell,
 
+                    -- SPY return stats (for always-Buy baseline)
+                    AVG(spy_return_30d) FILTER (WHERE spy_return_30d IS NOT NULL) as avg_spy_return,
+                    AVG(CASE WHEN spy_return_30d > 0 THEN 1.0 ELSE 0.0 END)
+                        FILTER (WHERE spy_return_30d IS NOT NULL) as spy_positive_rate,
+
+                    -- Confidence tier hit rates
                     AVG(CASE WHEN hit = true THEN 1.0 ELSE 0.0 END)
-                        FILTER (WHERE confidence = 'High' AND recommendation != 'Hold')
+                        FILTER (WHERE policy_confidence_floor = 'High' AND recommendation != 'Hold')
                         as hit_rate_high,
                     AVG(CASE WHEN hit = true THEN 1.0 ELSE 0.0 END)
-                        FILTER (WHERE confidence = 'Medium' AND recommendation != 'Hold')
+                        FILTER (WHERE policy_confidence_floor = 'Medium' AND recommendation != 'Hold')
                         as hit_rate_medium,
                     AVG(CASE WHEN hit = true THEN 1.0 ELSE 0.0 END)
-                        FILTER (WHERE confidence = 'Low' AND recommendation != 'Hold')
+                        FILTER (WHERE policy_confidence_floor = 'Low' AND recommendation != 'Hold')
                         as hit_rate_low,
+
+                    -- Divergence metric: when we override analyst consensus, do we win?
+                    COUNT(*) FILTER (WHERE analyst_override = true AND recommendation != 'Hold')
+                        as divergence_count,
+                    AVG(CASE WHEN hit = true THEN 1.0 ELSE 0.0 END)
+                        FILTER (WHERE analyst_override = true AND recommendation != 'Hold')
+                        as divergence_hit_rate,
+                    AVG(CASE WHEN hit = true THEN 1.0 ELSE 0.0 END)
+                        FILTER (WHERE analyst_override = false AND recommendation != 'Hold')
+                        as consensus_hit_rate,
 
                     MAX(model_version) as model_version
 
@@ -252,6 +313,44 @@ def _write_eval_run(engine: Engine, run_time: datetime) -> None:
             if not result or result.directional_count == 0:
                 return
 
+            # Confidence intervals (Wilson score, 95%)
+            ci_overall = _binomial_ci(result.hits_total or 0, result.directional_count or 0)
+            ci_buy     = _binomial_ci(result.hits_buy or 0, result.buy_count or 0)
+            ci_sell    = _binomial_ci(result.hits_sell or 0, result.sell_count or 0)
+
+            # Per-rule attribution — which rules are making money?
+            rule_rows = conn.execute(text("""
+                SELECT
+                    policy_rule_fired,
+                    COUNT(*) as n,
+                    AVG(CASE WHEN hit = true THEN 1.0 ELSE 0.0 END) as hit_rate,
+                    AVG(return_30d - spy_return_30d)
+                        FILTER (WHERE spy_return_30d IS NOT NULL) as avg_alpha,
+                    AVG(return_30d) as avg_return
+                FROM pipeline_signals
+                WHERE eval_status = 'evaluated'
+                  AND recommendation != 'Hold'
+                  AND policy_rule_fired IS NOT NULL
+                GROUP BY policy_rule_fired
+                ORDER BY n DESC
+            """)).fetchall()
+
+            rule_attribution = [
+                {
+                    "rule": row.policy_rule_fired,
+                    "n": row.n,
+                    "hit_rate": round(float(row.hit_rate), 4) if row.hit_rate is not None else None,
+                    "avg_alpha": round(float(row.avg_alpha), 4) if row.avg_alpha is not None else None,
+                    "avg_return": round(float(row.avg_return), 4) if row.avg_return is not None else None,
+                    "ci": _binomial_ci(
+                        round(float(row.hit_rate) * row.n) if row.hit_rate else 0,
+                        row.n
+                    ),
+                }
+                for row in rule_rows
+            ]
+
+            import json as _json
             conn.execute(text("""
                 INSERT INTO eval_runs (
                     run_id, model_version, triggered_by,
@@ -291,15 +390,44 @@ def _write_eval_run(engine: Engine, run_time: datetime) -> None:
             })
             conn.commit()
 
+            # Log comprehensive summary
+            n = result.directional_count
             logger.info(
-                f"eval_job: eval_run written — "
-                f"signals={result.directional_count} "
-                f"hit_rate_buy={result.hit_rate_buy:.1%} "
-                f"hit_rate_sell={result.hit_rate_sell:.1%} "
-                f"avg_alpha_buy={result.avg_alpha_buy:.2%}"
-                if result.avg_alpha_buy else
-                f"eval_job: eval_run written — signals={result.directional_count}"
+                f"eval_job: eval_run written — n={n} "
+                f"hit_rate={result.hit_rate_overall:.1%} "
+                f"CI=[{ci_overall[0]:.1%},{ci_overall[1]:.1%}] "
+                f"(n too small for significance)" if n < 30 else
+                f"eval_job: eval_run written — n={n} "
+                f"hit_rate={result.hit_rate_overall:.1%} "
+                f"CI=[{ci_overall[0]:.1%},{ci_overall[1]:.1%}]"
             )
+
+            # Log baselines for comparison
+            if result.avg_spy_return is not None:
+                logger.info(
+                    f"eval_job: baselines — "
+                    f"always_buy_spy_rate={result.spy_positive_rate:.1%} "
+                    f"avg_spy_return={result.avg_spy_return:.2%}"
+                )
+
+            # Log divergence metric
+            if result.divergence_count and result.divergence_count > 0:
+                logger.info(
+                    f"eval_job: divergence — "
+                    f"override_hit_rate={result.divergence_hit_rate:.1%} (n={result.divergence_count}) "
+                    f"vs consensus_hit_rate={result.consensus_hit_rate:.1%}"
+                )
+
+            # Log per-rule attribution
+            for r in rule_attribution:
+                logger.info(
+                    f"eval_job: rule [{r['rule']}] "
+                    f"n={r['n']} hit_rate={r['hit_rate']:.1%} "
+                    f"alpha={r['avg_alpha']:.2%} "
+                    f"CI=[{r['ci'][0]:.1%},{r['ci'][1]:.1%}]"
+                    if r['hit_rate'] is not None else
+                    f"eval_job: rule [{r['rule']}] n={r['n']} no hits yet"
+                )
 
     except Exception as e:
         logger.error(f"eval_job: failed to write eval_run: {e}", exc_info=True)

@@ -118,3 +118,5 @@ def test_unknown_recommendation_skipped():
     result = maybe_execute_trade("AAPL", "equity", _make_report("Strong Buy", "High"))
     assert result["traded"] is False
     assert "unknown_recommendation" in result["skipped_reason"]
+
+

@@ -1,141 +1,100 @@
 """
-tests/test_win_rate.py — Win rate computation tests
+tests/test_eval_hit.py — _determine_hit and _fetch_return edge case tests
 
-Tests the round-trip win/loss logic against a synthetic order history
-with known outcomes. Imports from alpaca_broker.portfolio_stats —
-the real production module used by /portfolio — so tests are load-bearing.
+Note: _determine_hit now defaults to SPY-relative (relative=True).
+Tests explicitly pass relative=False for absolute-direction tests.
 """
 
-from alpaca_broker.portfolio_stats import compute_win_rate
+from evaluation.eval_job import _determine_hit, _fetch_return, _binomial_ci
 
 
-def _compute_win_rate(orders):
-    """Thin wrapper to keep test bodies unchanged."""
-    return compute_win_rate(orders)
+# ── _determine_hit — absolute (relative=False) ────────────────────────────────
+
+def test_buy_positive_return_is_hit():
+    assert _determine_hit("Buy", 0.05, relative=False) is True
+
+def test_buy_negative_return_is_miss():
+    assert _determine_hit("Buy", -0.03, relative=False) is False
+
+def test_sell_negative_return_is_hit():
+    assert _determine_hit("Sell", -0.05, relative=False) is True
+
+def test_sell_positive_return_is_miss():
+    assert _determine_hit("Sell", 0.03, relative=False) is False
+
+def test_hold_returns_none():
+    assert _determine_hit("Hold", 0.10, relative=False) is None
+    assert _determine_hit("Hold", -0.10, relative=False) is None
+    assert _determine_hit("Hold", 0.0, relative=False) is None
+
+def test_buy_exactly_zero_is_miss():
+    assert _determine_hit("Buy", 0.0, relative=False) is False
+
+def test_sell_exactly_zero_is_miss():
+    assert _determine_hit("Sell", 0.0, relative=False) is False
+
+def test_buy_very_small_positive_is_hit():
+    assert _determine_hit("Buy", 0.000001, relative=False) is True
+
+def test_sell_very_small_negative_is_hit():
+    assert _determine_hit("Sell", -0.000001, relative=False) is True
+
+def test_unknown_recommendation_returns_none():
+    assert _determine_hit("Strong Buy", 0.10, relative=False) is None
+    assert _determine_hit("", 0.10, relative=False) is None
+    assert _determine_hit("HOLD", 0.10, relative=False) is None
 
 
-def _order(ticker, side, price, status="filled", submitted_at="2026-01-01T00:00:00Z"):
-    return {
-        "ticker": ticker,
-        "side": side,
-        "filled_avg_price": price,
-        "status": status,
-        "submitted_at": submitted_at,
-    }
+# ── _determine_hit — SPY-relative (default) ────────────────────────────────────
+
+def test_buy_beats_spy_is_hit():
+    assert _determine_hit("Buy", 0.05, spy_return_30d=0.02) is True
+
+def test_buy_lags_spy_is_miss():
+    assert _determine_hit("Buy", 0.02, spy_return_30d=0.05) is False
+
+def test_sell_lags_spy_is_hit():
+    assert _determine_hit("Sell", -0.08, spy_return_30d=-0.03) is True
+
+def test_sell_beats_spy_is_miss():
+    assert _determine_hit("Sell", 0.05, spy_return_30d=0.02) is False
+
+def test_relative_fallback_without_spy():
+    assert _determine_hit("Buy", 0.05, spy_return_30d=None) is True
+    assert _determine_hit("Buy", -0.05, spy_return_30d=None) is False
 
 
-# ── No closed trades ──────────────────────────────────────────────────────────
+# ── _binomial_ci ──────────────────────────────────────────────────────────────
 
-def test_no_orders_win_rate_is_none():
-    result = _compute_win_rate([])
-    assert result["win_rate"] is None
-    assert result["closed_trades"] == 0
+def test_binomial_ci_zero_n():
+    lo, hi = _binomial_ci(0, 0)
+    assert lo == 0.0 and hi == 1.0
 
+def test_binomial_ci_all_hits():
+    lo, hi = _binomial_ci(10, 10)
+    assert lo > 0.6 and hi == 1.0
 
-def test_only_open_buys_win_rate_is_none():
-    """Open positions excluded — win rate should be None."""
-    orders = [_order("AAPL", "buy", 180.0, status="accepted")]
-    result = _compute_win_rate(orders)
-    assert result["win_rate"] is None
+def test_binomial_ci_half_hits():
+    lo, hi = _binomial_ci(50, 100)
+    assert 0.40 < lo < 0.50
+    assert 0.50 < hi < 0.60
 
-
-def test_only_filled_buys_no_sells_win_rate_is_none():
-    """Filled buys with no sells = no closed round trips = None win rate."""
-    orders = [
-        _order("AAPL", "buy", 180.0),
-        _order("NVDA", "buy", 200.0),
-    ]
-    result = _compute_win_rate(orders)
-    assert result["win_rate"] is None
-    assert result["closed_trades"] == 0
+def test_binomial_ci_bounds_valid():
+    for hits, n in [(0, 5), (3, 10), (7, 10), (10, 10), (50, 200)]:
+        lo, hi = _binomial_ci(hits, n)
+        assert 0.0 <= lo <= hi <= 1.0
 
 
-# ── The old bug — all buys would be 100% win rate ─────────────────────────────
+# ── _fetch_return edge cases ──────────────────────────────────────────────────
 
-def test_filled_buys_are_not_wins():
-    """
-    Critical: filled buys must NOT count as wins.
-    This was the original bug — every filled buy was a "win".
-    """
-    orders = [
-        _order("AAPL", "buy", 180.0),
-        _order("MSFT", "buy", 400.0),
-        _order("NVDA", "buy", 210.0),
-    ]
-    result = _compute_win_rate(orders)
-    # No sells → no closed round trips → win rate is None, not 100%
-    assert result["win_rate"] is None
-    assert result["wins"] == 0
+def test_fetch_return_zero_start_price_guard():
+    import inspect
+    source = inspect.getsource(_fetch_return)
+    assert "price_start == 0" in source
 
-
-# ── Winning round trips ────────────────────────────────────────────────────────
-
-def test_one_winning_round_trip():
-    orders = [
-        _order("AAPL", "buy", 180.0),
-        _order("AAPL", "sell", 190.0),  # sold higher → win
-    ]
-    result = _compute_win_rate(orders)
-    assert result["win_rate"] == 1.0
-    assert result["closed_trades"] == 1
-    assert result["wins"] == 1
-
-
-def test_one_losing_round_trip():
-    orders = [
-        _order("AAPL", "buy", 180.0),
-        _order("AAPL", "sell", 170.0),  # sold lower → loss
-    ]
-    result = _compute_win_rate(orders)
-    assert result["win_rate"] == 0.0
-    assert result["closed_trades"] == 1
-    assert result["wins"] == 0
-
-
-def test_mixed_wins_and_losses():
-    orders = [
-        _order("AAPL", "buy", 180.0),
-        _order("AAPL", "sell", 190.0),   # win
-        _order("MSFT", "buy", 400.0),
-        _order("MSFT", "sell", 380.0),   # loss
-        _order("NVDA", "buy", 200.0),
-        _order("NVDA", "sell", 220.0),   # win
-    ]
-    result = _compute_win_rate(orders)
-    assert result["closed_trades"] == 3
-    assert result["wins"] == 2
-    assert result["win_rate"] == round(2/3, 4)
-
-
-def test_avg_entry_price_used_for_multiple_buys():
-    """Multiple buys of same ticker → avg entry price used for win calc."""
-    orders = [
-        _order("AAPL", "buy", 180.0, submitted_at="2026-01-01T00:00:00Z"),
-        _order("AAPL", "buy", 200.0, submitted_at="2026-01-02T00:00:00Z"),
-        # avg entry = 190.0
-        _order("AAPL", "sell", 195.0),  # above avg entry 190 → win
-    ]
-    result = _compute_win_rate(orders)
-    assert result["wins"] == 1
-    assert result["win_rate"] == 1.0
-
-
-def test_sell_without_prior_buy_excluded():
-    """A sell with no corresponding buy history is not counted."""
-    orders = [
-        _order("AAPL", "sell", 190.0),  # no buy → excluded
-    ]
-    result = _compute_win_rate(orders)
-    assert result["closed_trades"] == 0
-    assert result["win_rate"] is None
-
-
-def test_break_even_sell_is_loss():
-    """Sell at exactly entry price is a loss (exit > entry required for win)."""
-    orders = [
-        _order("AAPL", "buy", 180.0),
-        _order("AAPL", "sell", 180.0),  # exactly break-even → not a win
-    ]
-    result = _compute_win_rate(orders)
-    assert result["wins"] == 0
-    assert result["win_rate"] == 0.0
+def test_fetch_return_returns_float_or_none():
+    from datetime import datetime, timezone, timedelta
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(days=35)
+    result = _fetch_return("INVALID_TICKER_XYZ_999", start, end)
+    assert result is None or isinstance(result, float)

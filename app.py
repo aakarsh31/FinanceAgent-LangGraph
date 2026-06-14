@@ -119,6 +119,8 @@ async def lifespan(app: FastAPI):
     if database_url:
         try:
             from langgraph.checkpoint.postgres import PostgresSaver
+            # Use psycopg connection string format
+            conn_str = database_url.replace("postgresql://", "postgresql+psycopg://") if "postgresql+psycopg" not in database_url else database_url
             # PostgresSaver needs plain psycopg format (not SQLAlchemy)
             pg_conn_str = database_url
             if pg_conn_str.startswith("postgresql+"):
@@ -511,7 +513,7 @@ async def evaluate():
     # Run maturation for any newly eligible signals
     summary = run_eval_maturation(pg_engine)
 
-    # Fetch latest eval_run
+    # Fetch latest eval_run — fresh connection after maturation
     try:
         with pg_engine.connect() as conn:
             latest = conn.execute(sql_text("""
@@ -528,35 +530,98 @@ async def evaluate():
                 SELECT COUNT(*) FROM pipeline_signals WHERE eval_status = 'evaluated'
             """)).scalar()
 
-        if not latest:
+            if not latest:
+                return {
+                    "status": "no_data",
+                    "message": "No evaluated signals yet. Signals mature after 30 days.",
+                    "pending_signals": total_pending,
+                    "maturation_summary": summary,
+                }
+
+            # Per-rule attribution query
+            from evaluation.eval_job import _binomial_ci
+            rule_rows = conn.execute(sql_text("""
+                SELECT
+                    policy_rule_fired,
+                    COUNT(*) as n,
+                    SUM(CASE WHEN hit = true THEN 1 ELSE 0 END) as hits,
+                    AVG(CASE WHEN hit = true THEN 1.0 ELSE 0.0 END) as hit_rate,
+                    AVG(return_30d - spy_return_30d)
+                        FILTER (WHERE spy_return_30d IS NOT NULL) as avg_alpha
+                FROM pipeline_signals
+                WHERE eval_status = 'evaluated'
+                  AND recommendation != 'Hold'
+                  AND policy_rule_fired IS NOT NULL
+                GROUP BY policy_rule_fired
+                ORDER BY n DESC
+            """)).fetchall()
+
+            # Divergence stats
+            divergence = conn.execute(sql_text("""
+                SELECT
+                    COUNT(*) FILTER (WHERE analyst_override = true) as override_n,
+                    SUM(CASE WHEN hit = true AND analyst_override = true THEN 1 ELSE 0 END) as override_hits,
+                    AVG(CASE WHEN hit = true THEN 1.0 ELSE 0.0 END)
+                        FILTER (WHERE analyst_override = true) as override_hit_rate,
+                    AVG(CASE WHEN hit = true THEN 1.0 ELSE 0.0 END)
+                        FILTER (WHERE analyst_override = false) as consensus_hit_rate,
+                    AVG(spy_return_30d) FILTER (WHERE spy_return_30d IS NOT NULL) as avg_spy_return
+                FROM pipeline_signals
+                WHERE eval_status = 'evaluated' AND recommendation != 'Hold'
+            """)).fetchone()
+
+            # Confidence intervals
+            n_overall = latest.signals_evaluated or 0
+            hits_overall = round((latest.hit_rate_overall or 0) * n_overall)
+            ci_overall = _binomial_ci(hits_overall, n_overall)
+
             return {
-                "status": "no_data",
-                "message": "No evaluated signals yet. Signals mature after 30 days.",
+                "status": "ok",
+                "model_version": latest.model_version,
+                "signals_evaluated": latest.signals_evaluated,
                 "pending_signals": total_pending,
+                "total_evaluated": total_evaluated,
+                "sample_size_note": "n too small for statistical significance" if n_overall < 30 else None,
+                "hit_rate": {
+                    "overall": round(float(latest.hit_rate_overall) * 100, 1) if latest.hit_rate_overall is not None else 0.0,
+                    "buy": round(float(latest.hit_rate_buy) * 100, 1) if latest.hit_rate_buy is not None else 0.0,
+                    "sell": round(float(latest.hit_rate_sell) * 100, 1) if latest.hit_rate_sell is not None else None,
+                    "high_confidence": round(float(latest.hit_rate_high_confidence) * 100, 1) if latest.hit_rate_high_confidence is not None else None,
+                    "medium_confidence": round(float(latest.hit_rate_medium_confidence) * 100, 1) if latest.hit_rate_medium_confidence is not None else None,
+                    "ci_95": [round(ci_overall[0] * 100, 1), round(ci_overall[1] * 100, 1)],
+                    "definition": "SPY-relative: Buy is a hit if it beat SPY over 30 days",
+                },
+                "baselines": {
+                    "always_buy_spy_rate": round(divergence.avg_spy_return * 100, 2) if divergence and divergence.avg_spy_return else None,
+                    "note": "always_buy_spy_rate = avg SPY return over evaluated windows — the passive benchmark",
+                },
+                "divergence": {
+                    "override_n": divergence.override_n if divergence else 0,
+                    "override_hit_rate": round(divergence.override_hit_rate * 100, 1) if divergence and divergence.override_hit_rate else None,
+                    "consensus_hit_rate": round(divergence.consensus_hit_rate * 100, 1) if divergence and divergence.consensus_hit_rate else None,
+                    "note": "override = signals where pipeline diverged from Wall Street consensus",
+                },
+                "returns": {
+                    "avg_return_buy_pct": round(latest.avg_return_buy * 100, 2) if latest.avg_return_buy else None,
+                    "avg_return_sell_pct": round(latest.avg_return_sell * 100, 2) if latest.avg_return_sell else None,
+                    "avg_alpha_buy_pct": round(latest.avg_alpha_buy * 100, 2) if latest.avg_alpha_buy else None,
+                },
+                "per_rule": [
+                    {
+                        "rule": r.policy_rule_fired,
+                        "n": r.n,
+                        "hit_rate": round(float(r.hit_rate) * 100, 1) if r.hit_rate is not None else None,
+                        "avg_alpha_pct": round(float(r.avg_alpha) * 100, 2) if r.avg_alpha is not None else None,
+                        "ci_95": [
+                            round(_binomial_ci(r.hits or 0, r.n)[0] * 100, 1),
+                            round(_binomial_ci(r.hits or 0, r.n)[1] * 100, 1),
+                        ],
+                    }
+                    for r in rule_rows
+                ],
+                "last_eval": latest.created_at.isoformat() if latest.created_at else None,
                 "maturation_summary": summary,
             }
-
-        return {
-            "status": "ok",
-            "model_version": latest.model_version,
-            "signals_evaluated": latest.signals_evaluated,
-            "pending_signals": total_pending,
-            "total_evaluated": total_evaluated,
-            "hit_rate": {
-                "overall": round(latest.hit_rate_overall * 100, 1) if latest.hit_rate_overall else None,
-                "buy": round(latest.hit_rate_buy * 100, 1) if latest.hit_rate_buy else None,
-                "sell": round(latest.hit_rate_sell * 100, 1) if latest.hit_rate_sell else None,
-                "high_confidence": round(latest.hit_rate_high_confidence * 100, 1) if latest.hit_rate_high_confidence else None,
-                "medium_confidence": round(latest.hit_rate_medium_confidence * 100, 1) if latest.hit_rate_medium_confidence else None,
-            },
-            "returns": {
-                "avg_return_buy_pct": round(latest.avg_return_buy * 100, 2) if latest.avg_return_buy else None,
-                "avg_return_sell_pct": round(latest.avg_return_sell * 100, 2) if latest.avg_return_sell else None,
-                "avg_alpha_buy_pct": round(latest.avg_alpha_buy * 100, 2) if latest.avg_alpha_buy else None,
-            },
-            "last_eval": latest.created_at.isoformat() if latest.created_at else None,
-            "maturation_summary": summary,
-        }
     except Exception as e:
         logger.error(f"/evaluate failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Eval query failed")

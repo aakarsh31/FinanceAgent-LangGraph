@@ -368,6 +368,19 @@ class SupervisorAgent:
         result.policy_analyst_override = active_verdict.analyst_override
         result.llm_recommendation_matched = llm_matched
 
+        # Clamp displayed confidence to at least the policy floor.
+        # The LLM may narrate at a lower confidence than the floor (e.g. "Low"
+        # on a "High"-floor verdict). Trading is safe because trade_executor
+        # always reads policy_confidence_floor, but the UI would show the wrong
+        # (lower) value and mislead the human approver.
+        _floor_rank = {"Low": 0, "Medium": 1, "High": 2}
+        if _floor_rank.get(result.confidence, 0) < _floor_rank[active_verdict.confidence_floor]:
+            logger.warning(
+                f"SupervisorAgent [{ticker}] LLM confidence '{result.confidence}' "
+                f"below policy floor '{active_verdict.confidence_floor}' — clamping up"
+            )
+            result.confidence = active_verdict.confidence_floor
+
         logger.info(
             f"SupervisorAgent complete for {ticker} — "
             f"recommendation={result.recommendation} "

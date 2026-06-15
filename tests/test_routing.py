@@ -7,7 +7,7 @@ changed graph_builder.py without updating the README agent count.
 """
 
 import pytest
-from src.graphs.graph_builder import route_by_asset_class
+from src.graphs.graph_builder import route_by_asset_class, GraphBuilder
 
 
 def _make_state(asset_class: str) -> dict:
@@ -54,6 +54,48 @@ def test_crypto_excludes_technical_analyst():
 def test_crypto_includes_all_wave1_nodes():
     result = route_by_asset_class(_make_state("crypto"))
     assert set(result) == {"onchain_analyst", "sentiment_agent", "risk_agent"}
+
+
+# ── Graph compilation — catches missing edges ──────────────────────────────────
+
+def _make_builder():
+    """Return a GraphBuilder with LLM calls mocked out — no OPENAI_API_KEY needed."""
+    from unittest.mock import MagicMock, patch
+    mock_llm = MagicMock()
+    with patch("src.graphs.graph_builder.LLMClient") as MockClient:
+        MockClient.return_value.get_llm.return_value = mock_llm
+        builder = GraphBuilder(engine=None)
+    return builder
+
+
+def test_graph_compiles_without_checkpointer():
+    """GraphBuilder.build() must compile cleanly — catches structural errors
+    like missing edges that LangGraph detects at compile time."""
+    builder = _make_builder()
+    graph = builder.setup_graph(checkpointer=None, hitl=False)
+    assert graph is not None
+
+
+def test_crypto_nodes_all_have_outgoing_edges():
+    """Regression test for the bug where sentiment_agent and risk_agent had no
+    outgoing edges in the crypto path, causing the graph to hang.
+
+    Verifies by inspecting the compiled graph's node map — every node that
+    route_by_asset_class returns for crypto must appear as a source in the
+    edge list (i.e. have at least one outgoing edge)."""
+    builder = _make_builder()
+    raw_graph = builder.build()
+
+    # Nodes routed for crypto
+    crypto_wave1 = {"onchain_analyst", "sentiment_agent", "risk_agent"}
+
+    # Get all nodes that have at least one outgoing edge defined in the graph
+    # raw_graph.edges is a set of (source, target) tuples
+    nodes_with_outgoing = {src for src, _ in raw_graph.edges}
+    for node in crypto_wave1:
+        assert node in nodes_with_outgoing, (
+            f"{node} has no outgoing edges — crypto pipeline would hang at this node"
+        )
 
 
 # ── Invalid asset class ────────────────────────────────────────────────────────

@@ -58,10 +58,20 @@ def test_crypto_includes_all_wave1_nodes():
 
 # ── Graph compilation — catches missing edges ──────────────────────────────────
 
+def _make_builder():
+    """Return a GraphBuilder with LLM calls mocked out — no OPENAI_API_KEY needed."""
+    from unittest.mock import MagicMock, patch
+    mock_llm = MagicMock()
+    with patch("src.graphs.graph_builder.LLMClient") as MockClient:
+        MockClient.return_value.get_llm.return_value = mock_llm
+        builder = GraphBuilder(engine=None)
+    return builder
+
+
 def test_graph_compiles_without_checkpointer():
     """GraphBuilder.build() must compile cleanly — catches structural errors
     like missing edges that LangGraph detects at compile time."""
-    builder = GraphBuilder(engine=None)
+    builder = _make_builder()
     graph = builder.setup_graph(checkpointer=None, hitl=False)
     assert graph is not None
 
@@ -73,18 +83,17 @@ def test_crypto_nodes_all_have_outgoing_edges():
     Verifies by inspecting the compiled graph's node map — every node that
     route_by_asset_class returns for crypto must appear as a source in the
     edge list (i.e. have at least one outgoing edge)."""
-    builder = GraphBuilder(engine=None)
+    builder = _make_builder()
     raw_graph = builder.build()
-    compiled = raw_graph.compile(checkpointer=None, interrupt_before=[])
 
     # Nodes routed for crypto
     crypto_wave1 = {"onchain_analyst", "sentiment_agent", "risk_agent"}
 
     # Get all nodes that have at least one outgoing edge defined in the graph
-    nodes_with_edges = set(raw_graph.edges)
-    # Also check conditional edges map
+    # raw_graph.edges is a set of (source, target) tuples
+    nodes_with_outgoing = {src for src, _ in raw_graph.edges}
     for node in crypto_wave1:
-        assert node in nodes_with_edges, (
+        assert node in nodes_with_outgoing, (
             f"{node} has no outgoing edges — crypto pipeline would hang at this node"
         )
 

@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import Pipeline from '../components/Pipeline';
 import Report from '../components/Report';
 import { AssetBadge } from '../components/Badge';
@@ -7,98 +7,50 @@ import { genThreadId } from '../lib/utils';
 
 const TIMEFRAMES = ['1mo', '3mo', '6mo', '1y'];
 
-// Map log messages → node state updates
-function parseLogLine(line, assetClass) {
-  const output = {};
-
-  if (line.includes('DataFetchAgent complete'))         output['data_fetch'] = 'done';
-  else if (line.includes('DataFetchAgent starting'))    output['data_fetch'] = 'running';
-
-  if (line.includes('MacroRegimeAgent complete')) {
-    output['macro'] = 'done';
-    const m = line.match(/regime='([^']+)'/);
-    if (m) output['macro_output'] = m[1];
-  } else if (line.includes('MacroRegimeAgent starting')) output['macro'] = 'running';
-
-  if (line.includes('FundamentalsAgent complete')) {
-    output['fundamentals'] = 'done';
-    const m = line.match(/PE=([\d.]+)/);
-    if (m) output['fundamentals_output'] = `P/E ${parseFloat(m[1]).toFixed(1)}`;
-  } else if (line.includes('FundamentalsAgent starting')) output['fundamentals'] = 'running';
-
-  if (line.includes('SentimentAgent complete')) {
-    output[assetClass === 'crypto' ? 'sentiment' : 'sentiment'] = 'done';
-    const m = line.match(/label=(\w+)/);
-    if (m) output['sentiment_output'] = m[1];
-  } else if (line.includes('SentimentAgent starting')) output['sentiment'] = 'running';
-
-  if (line.includes('RiskDataAgent complete')) {
-    output['risk'] = 'done';
-    const m = line.match(/volatility=([\d.]+)/);
-    if (m) output['risk_output'] = `Vol ${m[1]}%`;
-  } else if (line.includes('RiskDataAgent starting')) output['risk'] = 'running';
-
-  if (line.includes('TechnicalAnalyst complete')) {
-    output['technical'] = 'done';
-    const m = line.match(/signal=(\w+)/);
-    if (m) output['technical_output'] = m[1];
-  } else if (line.includes('TechnicalAnalyst starting')) output['technical'] = 'running';
-
-  if (line.includes('OnChainAnalyst complete')) {
-    output['onchain'] = 'done';
-    const m = line.match(/health=(\w+)/);
-    if (m) output['onchain_output'] = m[1];
-  } else if (line.includes('OnChainAnalyst starting')) output['onchain'] = 'running';
-
-  if (line.includes('BullAnalyst complete')) {
-    output['bull'] = 'done';
-    const m = line.match(/confidence=(\w+)/);
-    if (m) output['bull_output'] = `Bull ${m[1]}`;
-  } else if (line.includes('BullAnalyst starting')) output['bull'] = 'running';
-
-  if (line.includes('BearAnalyst complete')) {
-    output['bear'] = 'done';
-    const m = line.match(/confidence=(\w+)/);
-    if (m) output['bear_output'] = `Bear ${m[1]}`;
-  } else if (line.includes('BearAnalyst starting')) output['bear'] = 'running';
-
-  if (line.includes('ValuationAnalyst complete')) {
-    output['valuation'] = 'done';
-    const m = line.match(/label=(\w+)/);
-    if (m) output['valuation_output'] = m[1];
-  } else if (line.includes('ValuationAnalyst starting')) output['valuation'] = 'running';
-
-  if (line.includes('SupervisorAgent complete')) {
-    output['supervisor'] = 'done';
-    const m = line.match(/recommendation=(\w+)/);
-    if (m) output['supervisor_output'] = m[1];
-  } else if (line.includes('SupervisorAgent starting')) output['supervisor'] = 'running';
-
-  return output;
-}
+// Maps node ids → human label for the live status line
+const NODE_LABELS = {
+  data_fetch:   'Fetching market data',
+  macro:        'Analysing macro regime',
+  fundamentals: 'Running fundamentals',
+  sentiment:    'Scoring sentiment',
+  risk:         'Calculating risk',
+  technical:    'Reading technicals',
+  onchain:      'Pulling on-chain data',
+  bull:         'Building bull case',
+  bear:         'Building bear case',
+  valuation:    'Valuing the asset',
+  supervisor:   'Supervisor writing memo',
+};
 
 export default function Analyze() {
-  const [ticker, setTicker]           = useState('');
-  const [timeframe, setTimeframe]     = useState('3mo');
-  const [running, setRunning]         = useState(false);
-  const [paused, setPaused]           = useState(false);
-  const [approved, setApproved]       = useState(false);
-  const [approving, setApproving]     = useState(false);
-  const [error, setError]             = useState(null);
-  const [assetClass, setAssetClass]   = useState(null);
-  const [nodeStates, setNodeStates]   = useState({});
-  const [report, setReport]           = useState(null);
+  const [ticker, setTicker]             = useState('');
+  const [timeframe, setTimeframe]       = useState('3mo');
+  const [running, setRunning]           = useState(false);
+  const [paused, setPaused]             = useState(false);
+  const [approved, setApproved]         = useState(false);
+  const [approving, setApproving]       = useState(false);
+  const [error, setError]               = useState(null);
+  const [assetClass, setAssetClass]     = useState(null);
+  const [nodeStates, setNodeStates]     = useState({});
+  const [report, setReport]             = useState(null);
   const [intermediate, setIntermediate] = useState(null);
-  const [tradeResult, setTradeResult] = useState(null);
-  const [logs, setLogs]               = useState([]);
-  const threadRef                     = useRef(null);
+  const [tradeResult, setTradeResult]   = useState(null);
+  const [statusLine, setStatusLine]     = useState('');
+  const threadRef   = useRef(null);
+  const cleanupRef  = useRef(null);  // holds SSE close fn
+
+  // Clean up SSE on unmount
+  useEffect(() => () => cleanupRef.current?.(), []);
 
   const updateNodes = useCallback((updates) => {
     setNodeStates(prev => ({ ...prev, ...updates }));
   }, []);
 
-  const handleAnalyze = async () => {
+  const handleAnalyze = () => {
     if (!ticker.trim()) return;
+
+    // Close any existing stream
+    cleanupRef.current?.();
 
     const t = ticker.trim().toUpperCase();
     const threadId = genThreadId(t);
@@ -112,65 +64,100 @@ export default function Analyze() {
     setTradeResult(null);
     setError(null);
     setNodeStates({});
-    setLogs([]);
     setAssetClass(null);
+    setStatusLine('Connecting...');
+
+    // Mark data_fetch as running immediately so something lights up right away
     updateNodes({ data_fetch: 'running' });
 
-    try {
-      const res = await api.analyze(t, timeframe, threadId);
+    cleanupRef.current = api.analyzeStream(t, timeframe, threadId, {
 
-      if (res.status === 'error') {
-        setError(res.message || 'Analysis failed');
+      onNode: (nodeId, data) => {
+        // Mark the just-completed node done
+        const nodeUpdates = { [nodeId]: 'done' };
+
+        // Extract display snippet per node
+        if (nodeId === 'data_fetch' && data.asset_class) {
+          setAssetClass(data.asset_class);
+        }
+        if (nodeId === 'macro' && data.regime_label) {
+          nodeUpdates['macro_output'] = data.regime_label;
+        }
+        if (nodeId === 'sentiment' && data.label) {
+          nodeUpdates['sentiment_output'] = data.label;
+        }
+        if (nodeId === 'risk' && data.volatility != null) {
+          nodeUpdates['risk_output'] = `Vol ${parseFloat(data.volatility).toFixed(1)}%`;
+        }
+        if (nodeId === 'technical' && data.signal) {
+          nodeUpdates['technical_output'] = data.signal;
+        }
+        if (nodeId === 'bull' && data.confidence) {
+          nodeUpdates['bull_output'] = `Bull ${data.confidence}`;
+        }
+        if (nodeId === 'bear' && data.confidence) {
+          nodeUpdates['bear_output'] = `Bear ${data.confidence}`;
+        }
+        if (nodeId === 'valuation' && data.label) {
+          nodeUpdates['valuation_output'] = data.label;
+        }
+        if (nodeId === 'onchain' && data.network_health) {
+          nodeUpdates['onchain_output'] = data.network_health;
+        }
+        if (nodeId === 'supervisor' && data.recommendation) {
+          nodeUpdates['supervisor_output'] = data.recommendation;
+        }
+
+        updateNodes(nodeUpdates);
+        setStatusLine(NODE_LABELS[nodeId] ? `✓ ${NODE_LABELS[nodeId]}` : '');
+      },
+
+      onDone: (result) => {
+        setAssetClass(result.asset_class);
+        setIntermediate(result.intermediate);
+
+        // Fill in any node states from the final result in case an event was missed
+        const fills = { data_fetch: 'done', supervisor: 'done' };
+        const im = result.intermediate || {};
+        if (im.macro)        fills['macro']        = 'done';
+        if (im.fundamentals) fills['fundamentals']  = 'done';
+        if (im.sentiment)    fills['sentiment']     = 'done';
+        if (im.risk)         fills['risk']          = 'done';
+        if (im.technical)    fills['technical']     = 'done';
+        if (im.onchain)      fills['onchain']       = 'done';
+        if (im.bull_thesis)  fills['bull']          = 'done';
+        if (im.bear_thesis)  fills['bear']          = 'done';
+        if (im.valuation)    fills['valuation']     = 'done';
+
+        if (result.supervisor_report) {
+          fills['supervisor_output'] = result.supervisor_report.recommendation;
+        }
+        updateNodes(fills);
+
+        setReport(result.supervisor_report);
+        setStatusLine('');
         setRunning(false);
-        return;
-      }
+        setPaused(true);
+      },
 
-      // Update asset class
-      setAssetClass(res.asset_class);
-
-      // Update node states from intermediate data
-      if (res.intermediate) {
-        setIntermediate(res.intermediate);
-
-        updateNodes({ data_fetch: 'done' });
-        if (res.intermediate.macro)        updateNodes({ macro: 'done', macro_output: res.intermediate.macro.regime_label });
-        if (res.intermediate.fundamentals) updateNodes({ fundamentals: 'done' });
-        if (res.intermediate.sentiment)    updateNodes({ sentiment: 'done', sentiment_output: res.intermediate.sentiment.sentiment_label });
-        if (res.intermediate.risk)         updateNodes({ risk: 'done', risk_output: `Vol ${res.intermediate.risk.volatility}%` });
-        if (res.intermediate.technical)    updateNodes({ technical: 'done', technical_output: res.intermediate.technical.signal });
-        if (res.intermediate.onchain)      updateNodes({ onchain: 'done' });
-        if (res.intermediate.bull_thesis)  updateNodes({ bull: 'done', bull_output: `Bull ${res.intermediate.bull_thesis.confidence}` });
-        if (res.intermediate.bear_thesis)  updateNodes({ bear: 'done', bear_output: `Bear ${res.intermediate.bear_thesis.confidence}` });
-        if (res.intermediate.valuation)    updateNodes({ valuation: 'done', valuation_output: res.intermediate.valuation.valuation_label });
-      }
-
-      // Supervisor already ran — show the report immediately
-      if (res.supervisor_report) {
-        updateNodes({ supervisor: 'done', supervisor_output: res.supervisor_report.recommendation });
-        setReport(res.supervisor_report);
-      }
-
-      setPaused(true);
-      setRunning(false);
-    } catch (e) {
-      setError('Network error — is the API running?');
-      setRunning(false);
-    }
+      onError: (detail) => {
+        setError(detail);
+        setStatusLine('');
+        setRunning(false);
+      },
+    });
   };
 
   const handleApprove = async () => {
     if (!threadRef.current) return;
     setApproving(true);
-    updateNodes({ supervisor: 'running' });
-
     try {
       const res = await api.approve(threadRef.current);
-      updateNodes({ supervisor: 'done', supervisor_output: res.supervisor_report?.recommendation });
       setReport(res.supervisor_report);
       setTradeResult(res.trade);
       setPaused(false);
       setApproved(true);
-    } catch (e) {
+    } catch {
       setError('Approval failed');
     } finally {
       setApproving(false);
@@ -178,6 +165,7 @@ export default function Analyze() {
   };
 
   const handleReset = () => {
+    cleanupRef.current?.();
     setTicker('');
     setRunning(false);
     setPaused(false);
@@ -188,6 +176,7 @@ export default function Analyze() {
     setError(null);
     setAssetClass(null);
     setTradeResult(null);
+    setStatusLine('');
     threadRef.current = null;
   };
 
@@ -208,7 +197,6 @@ export default function Analyze() {
             display: 'flex', alignItems: 'center',
             background: 'var(--surface2)', border: '1px solid rgba(99,102,241,0.3)',
             borderRadius: '6px', overflow: 'hidden',
-            transition: 'border-color 0.2s, box-shadow 0.2s',
           }}>
             <span style={{ padding: '0 12px', color: 'var(--blue)', fontSize: '14px', fontWeight: 700, borderRight: '1px solid rgba(99,102,241,0.2)', height: '44px', display: 'flex', alignItems: 'center', fontFamily: 'var(--mono)' }}>
               $
@@ -251,7 +239,6 @@ export default function Analyze() {
                   border: timeframe === t ? '1px solid var(--blue)' : '1px solid var(--border)',
                   background: timeframe === t ? 'var(--blue-dim)' : 'var(--surface2)',
                   color: timeframe === t ? 'var(--blue)' : 'var(--muted)',
-                  transition: 'all 0.15s',
                 }}
               >
                 {t}
@@ -266,12 +253,13 @@ export default function Analyze() {
             onClick={handleAnalyze}
             disabled={running || !ticker.trim()}
             style={{
-              width: '100%', height: '42px', borderRadius: '6px', cursor: running || !ticker.trim() ? 'not-allowed' : 'pointer',
+              width: '100%', height: '42px', borderRadius: '6px',
+              cursor: running || !ticker.trim() ? 'not-allowed' : 'pointer',
               background: running ? 'var(--surface3)' : 'var(--blue)', border: 'none',
               color: running ? 'var(--muted)' : 'white', fontFamily: 'var(--mono)',
               fontSize: '12px', fontWeight: 700, letterSpacing: '0.12em',
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
-              transition: 'all 0.15s', opacity: !ticker.trim() ? 0.5 : 1,
+              opacity: !ticker.trim() ? 0.5 : 1,
             }}
           >
             {running ? (
@@ -287,12 +275,13 @@ export default function Analyze() {
               onClick={handleApprove}
               disabled={approving}
               style={{
-                width: '100%', height: '42px', borderRadius: '6px', cursor: approving ? 'not-allowed' : 'pointer',
+                width: '100%', height: '42px', borderRadius: '6px',
+                cursor: approving ? 'not-allowed' : 'pointer',
                 background: 'transparent', border: '1px solid var(--green)',
                 color: 'var(--green)', fontFamily: 'var(--mono)',
                 fontSize: '12px', fontWeight: 700, letterSpacing: '0.12em',
                 display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
-                marginTop: '8px', transition: 'all 0.15s',
+                marginTop: '8px',
               }}
             >
               {approving ? 'APPROVING...' : '✓ APPROVE & TRADE'}
@@ -306,14 +295,20 @@ export default function Analyze() {
                 width: '100%', height: '36px', borderRadius: '6px', cursor: 'pointer',
                 background: 'transparent', border: '1px solid var(--border)',
                 color: 'var(--muted)', fontFamily: 'var(--mono)',
-                fontSize: '11px', letterSpacing: '0.1em',
-                marginTop: '8px', transition: 'all 0.15s',
+                fontSize: '11px', letterSpacing: '0.1em', marginTop: '8px',
               }}
             >
               ← NEW ANALYSIS
             </button>
           )}
         </div>
+
+        {/* Live status line */}
+        {statusLine && (
+          <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', fontSize: '11px', color: 'var(--amber)', fontFamily: 'var(--mono)', letterSpacing: '0.05em' }}>
+            {statusLine}
+          </div>
+        )}
 
         {/* Firm roster */}
         <div style={{ padding: '16px', flex: 1 }}>
@@ -341,7 +336,6 @@ export default function Analyze() {
       {/* Main content */}
       <main style={{ background: 'var(--bg)', overflow: 'auto' }}>
 
-        {/* Error */}
         {error && (
           <div style={{
             margin: '16px 24px 0', padding: '12px 16px',
@@ -352,7 +346,6 @@ export default function Analyze() {
           </div>
         )}
 
-        {/* Pipeline */}
         {showPipeline && (
           <div style={{ padding: '24px', borderBottom: '1px solid var(--border)' }}>
             <div style={{ fontSize: '11px', color: 'var(--muted)', letterSpacing: '0.15em', textTransform: 'uppercase', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -368,7 +361,6 @@ export default function Analyze() {
           </div>
         )}
 
-        {/* Report */}
         {report && (
           <div style={{ padding: '24px' }}>
             <Report
@@ -383,7 +375,6 @@ export default function Analyze() {
           </div>
         )}
 
-        {/* Empty state */}
         {!showPipeline && !report && !error && (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '70vh', gap: '16px' }}>
             <div className="prism" style={{ fontSize: '64px', fontWeight: 800, letterSpacing: '0.02em', lineHeight: 1, textAlign: 'center' }}>

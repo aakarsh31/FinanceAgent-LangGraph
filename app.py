@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI, Request, HTTPException, Header, Depends
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from sqlalchemy import text
@@ -158,9 +158,16 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+# CORS — base origins cover local dev. Set CORS_ORIGINS env var (comma-separated)
+# to add production URLs without hardcoding, e.g.:
+#   CORS_ORIGINS=https://financeagent-langgraph-production.up.railway.app
+_base_origins = ["http://localhost:5173", "http://localhost:3000"]
+_extra_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
+_allowed_origins = _base_origins + _extra_origins
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -194,6 +201,259 @@ async def api_info():
 
 
 # ── /analyze ─────────────────────────────────────────────────────────────────
+
+# ── /analyze/stream ───────────────────────────────────────────────────────────
+#
+# SSE endpoint — streams node-by-node updates as the graph executes.
+# Each agent completion fires a JSON event the frontend consumes immediately,
+# so the Pipeline lights up in real time instead of all at once after 30-60s.
+#
+# Event types:
+#   {type: "node_complete", node: "<name>", data: {<relevant state slice>}}
+#   {type: "done",          result: <full /analyze response payload>}
+#   {type: "error",         detail: "<message>"}
+#
+# The frontend opens an EventSource to GET /analyze/stream?ticker=AAPL&...
+# We use GET (not POST) because EventSource only supports GET.
+
+# Maps internal LangGraph node names → frontend Pipeline node ids
+_NODE_ID_MAP = {
+    "data_fetch":        "data_fetch",
+    "macro_regime_agent": "macro",
+    "fundamentals_agent": "fundamentals",
+    "sentiment_agent":   "sentiment",
+    "risk_agent":        "risk",
+    "technical_analyst": "technical",
+    "bull_analyst":      "bull",
+    "bear_analyst":      "bear",
+    "valuation_analyst": "valuation",
+    "onchain_analyst":   "onchain",
+    "supervisor_agent":  "supervisor",
+}
+
+# Extracts a small display snippet from the state slice each node writes
+def _node_snippet(node_name: str, state_update: dict) -> dict:
+    """Pull out the 1-2 most useful fields from each node's state update."""
+    s = state_update
+    if node_name == "data_fetch":
+        return {"asset_class": s.get("asset_class", "equity")}
+    if node_name == "macro_regime_agent":
+        m = s.get("macro") or {}
+        if hasattr(m, "regime_label"):  # Pydantic model
+            return {"regime_label": m.regime_label}
+        return {"regime_label": m.get("regime_label", "")}
+    if node_name == "fundamentals_agent":
+        f = s.get("fundamentals") or {}
+        if hasattr(f, "EPS"):
+            return {"EPS": f.EPS, "revenue_growth": f.revenue_growth}
+        return {"EPS": f.get("EPS"), "revenue_growth": f.get("revenue_growth")}
+    if node_name == "sentiment_agent":
+        sent = s.get("sentiment") or {}
+        if hasattr(sent, "sentiment_label"):
+            return {"label": sent.sentiment_label, "score": sent.sentiment_score}
+        return {"label": sent.get("sentiment_label", ""), "score": sent.get("sentiment_score")}
+    if node_name == "risk_agent":
+        r = s.get("risk") or {}
+        if hasattr(r, "volatility"):
+            return {"volatility": r.volatility, "beta": r.beta}
+        return {"volatility": r.get("volatility"), "beta": r.get("beta")}
+    if node_name == "technical_analyst":
+        t = s.get("technical") or {}
+        return {"signal": t.get("signal", ""), "rsi": t.get("rsi")}
+    if node_name == "bull_analyst":
+        b = s.get("bull_thesis") or {}
+        if hasattr(b, "confidence"):
+            return {"confidence": b.confidence}
+        return {"confidence": b.get("confidence", "")}
+    if node_name == "bear_analyst":
+        b = s.get("bear_thesis") or {}
+        if hasattr(b, "confidence"):
+            return {"confidence": b.confidence}
+        return {"confidence": b.get("confidence", "")}
+    if node_name == "valuation_analyst":
+        v = s.get("valuation") or {}
+        if hasattr(v, "valuation_label"):
+            return {"label": v.valuation_label}
+        return {"label": v.get("valuation_label", "")}
+    if node_name == "onchain_analyst":
+        o = s.get("onchain") or {}
+        if hasattr(o, "network_health"):
+            return {"network_health": o.network_health, "fear_greed": o.fear_greed_score}
+        return {"network_health": o.get("network_health", ""), "fear_greed": o.get("fear_greed_score")}
+    if node_name == "supervisor_agent":
+        rep = s.get("supervisor_report") or {}
+        if hasattr(rep, "recommendation"):
+            return {"recommendation": rep.recommendation, "confidence": rep.confidence}
+        return {"recommendation": rep.get("recommendation", ""), "confidence": rep.get("confidence", "")}
+    return {}
+
+
+def _sse(event_type: str, payload: dict) -> str:
+    """Format a single SSE message."""
+    import json
+    data = json.dumps({"type": event_type, **payload})
+    return f"data: {data}\n\n"
+
+
+@app.get("/analyze/stream")
+async def analyze_stream(
+    ticker: str,
+    timeframe: str,
+    thread_id: str,
+    request: Request,
+):
+    """
+    SSE stream of agent completions for a given ticker analysis.
+    Frontend opens as: new EventSource('/analyze/stream?ticker=AAPL&timeframe=3mo&thread_id=...')
+    """
+    ticker = ticker.strip().upper()
+    if not ticker:
+        raise HTTPException(status_code=422, detail="ticker required")
+    if timeframe not in VALID_TIMEFRAMES:
+        raise HTTPException(status_code=422, detail=f"Invalid timeframe. Valid: {VALID_TIMEFRAMES}")
+    if not thread_id.strip():
+        raise HTTPException(status_code=422, detail="thread_id required")
+
+    logger.info(f"/analyze/stream — ticker={ticker} timeframe={timeframe} thread_id={thread_id}")
+    record_thread(thread_id)
+    config = {"configurable": {"thread_id": thread_id}}
+
+    async def event_generator():
+        import json
+
+        try:
+            # graph.stream yields {node_name: state_update} after each node completes
+            # We run it in a thread since LangGraph's stream() is synchronous
+            # Bridge: sync graph.stream() → async queue
+            # queue.put_nowait is NOT thread-safe — use call_soon_threadsafe
+            # so the background thread can safely wake the event loop.
+            queue = asyncio.Queue()
+            loop = asyncio.get_event_loop()
+
+            def _put(item):
+                loop.call_soon_threadsafe(queue.put_nowait, item)
+
+            def stream_worker():
+                try:
+                    for chunk in graph.stream(
+                        {"ticker": ticker, "timeframe": timeframe},
+                        config,
+                        stream_mode="updates",
+                    ):
+                        _put(("chunk", chunk))
+                    _put(("done", None))
+                except Exception as e:
+                    _put(("error", str(e)))
+
+            # Start stream in background thread
+            loop.run_in_executor(None, stream_worker)
+
+            final_state = None
+
+            while True:
+                # Check if client disconnected
+                if await request.is_disconnected():
+                    logger.info(f"SSE client disconnected — {ticker} {thread_id}")
+                    break
+
+                try:
+                    msg_type, payload = await asyncio.wait_for(queue.get(), timeout=120.0)
+                except asyncio.TimeoutError:
+                    yield _sse("error", {"detail": "Pipeline timeout"})
+                    break
+
+                if msg_type == "error":
+                    yield _sse("error", {"detail": payload})
+                    break
+
+                if msg_type == "done":
+                    break
+
+                if msg_type == "chunk":
+                    chunk = payload
+                    for node_name, state_update in chunk.items():
+                        if node_name == "__interrupt__":
+                            continue  # trade_gate interrupt — handled below
+                        frontend_id = _NODE_ID_MAP.get(node_name)
+                        if not frontend_id:
+                            continue
+                        snippet = _node_snippet(node_name, state_update)
+                        yield _sse("node_complete", {
+                            "node": frontend_id,
+                            "node_raw": node_name,
+                            "data": snippet,
+                        })
+
+            # Graph is paused at trade_gate — read the final suspended state
+            try:
+                snapshot = await asyncio.to_thread(graph.get_state, config)
+                state = snapshot.values
+            except Exception as e:
+                yield _sse("error", {"detail": f"Could not read final state: {e}"})
+                return
+
+            asset_class = state.get("asset_class", "equity")
+            supervisor_report = state.get("supervisor_report", {})
+
+            intermediate = {
+                "asset_class": asset_class,
+                "macro": state.get("macro"),
+                "risk": state.get("risk"),
+                "sentiment": state.get("sentiment"),
+                "analyst_consensus": state.get("analyst_consensus"),
+                "technical": state.get("technical"),
+            }
+            if asset_class == "equity":
+                intermediate.update({
+                    "fundamentals": state.get("fundamentals"),
+                    "bull_thesis": state.get("bull_thesis"),
+                    "bear_thesis": state.get("bear_thesis"),
+                    "valuation": state.get("valuation"),
+                })
+            else:
+                intermediate.update({"onchain": state.get("onchain")})
+
+            # Pydantic models → dicts for JSON serialisation
+            def _to_dict(v):
+                if v is None:
+                    return None
+                if hasattr(v, "model_dump"):
+                    return v.model_dump()
+                return v
+
+            intermediate = {k: _to_dict(v) for k, v in intermediate.items()}
+            if hasattr(supervisor_report, "model_dump"):
+                supervisor_report = supervisor_report.model_dump()
+
+            yield _sse("done", {
+                "result": {
+                    "status": "pending_approval",
+                    "thread_id": thread_id,
+                    "ticker": ticker,
+                    "asset_class": asset_class,
+                    "supervisor_report": supervisor_report,
+                    "intermediate": intermediate,
+                    "data_provenance": _to_dict(state.get("data_provenance", {})),
+                }
+            })
+
+        except FinanceAgentError as e:
+            logger.error(f"SSE pipeline failed for {ticker}: {e}", exc_info=True)
+            yield _sse("error", {"detail": str(e)})
+        except Exception as e:
+            logger.error(f"SSE unexpected error for {ticker}: {e}", exc_info=True)
+            yield _sse("error", {"detail": "Internal pipeline error"})
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",   # tells nginx not to buffer SSE
+            "Connection": "keep-alive",
+        },
+    )
+
 
 @app.post("/analyze")
 async def analyze(request: Request):
@@ -352,14 +612,7 @@ def _claim_decision(thread_id: str, decision: str, ticker: str, recommendation: 
     except Exception as e:
         error_str = str(e).lower()
         if "unique" in error_str or "duplicate" in error_str:
-            existing = _get_existing_decision(thread_id)
-            if existing == decision:
-                raise HTTPException(status_code=409, detail=f"Thread {thread_id} already {decision}")
-            else:
-                raise HTTPException(status_code=409, detail=f"Thread {thread_id} already {existing} — cannot {decision}")
-    except Exception as e:
-        error_str = str(e).lower()
-        if "unique" in error_str or "duplicate" in error_str:
+            # Idempotency conflict — 409 with the existing decision
             existing = _get_existing_decision(thread_id)
             if existing == decision:
                 raise HTTPException(status_code=409, detail=f"Thread {thread_id} already {decision}")
@@ -469,7 +722,9 @@ async def reject(thread_id: str, decided_by: str = Depends(verify_approver_key))
     recommendation = ""
     confidence = ""
     try:
-        state = graph.get_state(config).values
+        # graph.get_state does I/O (Postgres checkpointer) — must not block the event loop
+        snapshot = await asyncio.to_thread(graph.get_state, config)
+        state = snapshot.values
         ticker = state.get("ticker", "unknown")
         report = state.get("supervisor_report") or {}
         recommendation = report.get("recommendation", "") if isinstance(report, dict) else ""

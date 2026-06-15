@@ -10,6 +10,39 @@ export const api = {
       body: JSON.stringify({ ticker, timeframe, thread_id: threadId }),
     }).then(r => r.json()),
 
+  // SSE stream — returns an EventSource.
+  // onNode(nodeId, data)  — called after each agent completes
+  // onDone(result)        — called with the full /analyze payload when graph pauses
+  // onError(detail)       — called on pipeline or network error
+  // Returns a cleanup function — call it to close the stream.
+  analyzeStream: (ticker, timeframe, threadId, { onNode, onDone, onError }) => {
+    const params = new URLSearchParams({ ticker, timeframe, thread_id: threadId });
+    const es = new EventSource(`${BASE}/analyze/stream?${params}`);
+
+    es.onmessage = (e) => {
+      let msg;
+      try { msg = JSON.parse(e.data); } catch { return; }
+
+      if (msg.type === 'node_complete') {
+        onNode?.(msg.node, msg.data);
+      } else if (msg.type === 'done') {
+        es.close();
+        onDone?.(msg.result);
+      } else if (msg.type === 'error') {
+        es.close();
+        onError?.(msg.detail || 'Pipeline error');
+      }
+    };
+
+    es.onerror = () => {
+      es.close();
+      onError?.('Stream connection lost');
+    };
+
+    // Return cleanup so caller can abort early (e.g. component unmount)
+    return () => es.close();
+  },
+
   approve: (threadId) =>
     fetch(`${BASE}/approve/${threadId}`, { method: 'POST' }).then(r => r.json()),
 

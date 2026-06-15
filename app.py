@@ -158,9 +158,16 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+# CORS — base origins cover local dev. Set CORS_ORIGINS env var (comma-separated)
+# to add production URLs without hardcoding, e.g.:
+#   CORS_ORIGINS=https://financeagent-langgraph-production.up.railway.app
+_base_origins = ["http://localhost:5173", "http://localhost:3000"]
+_extra_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
+_allowed_origins = _base_origins + _extra_origins
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -352,14 +359,7 @@ def _claim_decision(thread_id: str, decision: str, ticker: str, recommendation: 
     except Exception as e:
         error_str = str(e).lower()
         if "unique" in error_str or "duplicate" in error_str:
-            existing = _get_existing_decision(thread_id)
-            if existing == decision:
-                raise HTTPException(status_code=409, detail=f"Thread {thread_id} already {decision}")
-            else:
-                raise HTTPException(status_code=409, detail=f"Thread {thread_id} already {existing} — cannot {decision}")
-    except Exception as e:
-        error_str = str(e).lower()
-        if "unique" in error_str or "duplicate" in error_str:
+            # Idempotency conflict — 409 with the existing decision
             existing = _get_existing_decision(thread_id)
             if existing == decision:
                 raise HTTPException(status_code=409, detail=f"Thread {thread_id} already {decision}")
@@ -469,7 +469,9 @@ async def reject(thread_id: str, decided_by: str = Depends(verify_approver_key))
     recommendation = ""
     confidence = ""
     try:
-        state = graph.get_state(config).values
+        # graph.get_state does I/O (Postgres checkpointer) — must not block the event loop
+        snapshot = await asyncio.to_thread(graph.get_state, config)
+        state = snapshot.values
         ticker = state.get("ticker", "unknown")
         report = state.get("supervisor_report") or {}
         recommendation = report.get("recommendation", "") if isinstance(report, dict) else ""

@@ -72,9 +72,10 @@ class GraphBuilder:
         graph.add_edge("data_fetch", "macro_regime_agent")
         graph.add_conditional_edges("macro_regime_agent", route_by_asset_class)
 
-        # equity wave 1 → wave 2
-        # bull/bear wait for all wave-1 agents (they use macro, sentiment, risk, fundamentals, technical)
-        # valuation only needs fundamentals — runs parallel to sentiment/risk/technical
+        # ── Equity wave 1 → wave 2 ────────────────────────────────────────────
+        # bull/bear wait for all wave-1 agents (they use macro, sentiment, risk,
+        # fundamentals, and technical data).
+        # valuation only needs fundamentals — runs parallel to sentiment/risk/technical.
         graph.add_edge("fundamentals_agent", "bull_analyst")
         graph.add_edge("fundamentals_agent", "bear_analyst")
         graph.add_edge("fundamentals_agent", "valuation_analyst")
@@ -85,13 +86,20 @@ class GraphBuilder:
         graph.add_edge("technical_analyst", "bull_analyst")
         graph.add_edge("technical_analyst", "bear_analyst")
 
-        # wave 2 → supervisor
+        # ── Equity wave 2 → supervisor ────────────────────────────────────────
         graph.add_edge("bull_analyst", "supervisor_agent")
         graph.add_edge("bear_analyst", "supervisor_agent")
         graph.add_edge("valuation_analyst", "supervisor_agent")
 
-        # crypto → supervisor
+        # ── Crypto wave → supervisor ──────────────────────────────────────────
+        # sentiment_agent and risk_agent are shared across both asset classes.
+        # In the equity path they fan into bull/bear which reach supervisor.
+        # In the crypto path they have no equity wave-2 nodes, so they need
+        # direct edges to supervisor — otherwise the graph hangs waiting for
+        # nodes that have no outgoing edges.
         graph.add_edge("onchain_analyst", "supervisor_agent")
+        graph.add_edge("sentiment_agent", "supervisor_agent")
+        graph.add_edge("risk_agent", "supervisor_agent")
 
         graph.add_edge("supervisor_agent", "trade_gate")
         graph.add_edge("trade_gate", END)
